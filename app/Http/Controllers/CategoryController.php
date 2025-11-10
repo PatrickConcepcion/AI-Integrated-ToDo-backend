@@ -37,6 +37,8 @@ class CategoryController extends Controller
      */
     public function store(StoreRequest $request): JsonResponse
     {
+        $this->authorize('create', Category::class);
+
         $validated = $request->validated();
 
         $category = Category::create($validated);
@@ -72,6 +74,8 @@ class CategoryController extends Controller
      */
     public function update(UpdateRequest $request, Category $category): JsonResponse
     {
+        $this->authorize('update', $category);
+
         $validated = $request->validated();
 
         $category->update($validated);
@@ -88,6 +92,8 @@ class CategoryController extends Controller
      */
     public function destroy(Request $request, Category $category): JsonResponse
     {
+        $this->authorize('delete', $category);
+
         $category->delete();
 
         return response()->json([

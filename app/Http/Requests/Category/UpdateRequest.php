@@ -23,6 +23,7 @@ class UpdateRequest extends FormRequest
     {
         return [
             'name' => ['sometimes', 'required', 'string', 'max:255', 'unique:categories,name,' . $this->route('category')->id],
+            'description' => ['nullable', 'string', 'max:500'],
             'color' => ['sometimes', 'required', 'string', 'regex:/^#[0-9A-Fa-f]{6}$/'],
         ];
     }
