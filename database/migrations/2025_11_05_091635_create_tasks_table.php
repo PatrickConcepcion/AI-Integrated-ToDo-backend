@@ -26,6 +26,7 @@ return new class extends Migration
             $table->date('due_date')->nullable();
             $table->text('notes')->nullable();
             $table->timestamp('completed_at')->nullable();
+            $table->timestamp('archived_at')->nullable();
             $table->timestamps();
         });
     }

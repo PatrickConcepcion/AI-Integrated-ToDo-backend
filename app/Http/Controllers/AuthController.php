@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use PHPOpenSourceSaver\JWTAuth\Exceptions\JWTException;
 use PHPOpenSourceSaver\JWTAuth\Exceptions\TokenExpiredException;
 use PHPOpenSourceSaver\JWTAuth\Exceptions\TokenInvalidException;
+use Spatie\Permission\Exceptions\RoleDoesNotExist;
 use App\Http\Requests\Auth\RegisterRequest;
 use App\Http\Requests\Auth\LoginRequest;
 
@@ -27,8 +28,17 @@ class AuthController extends Controller
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
-            'role' => 'user', // default role
         ]);
+
+        try {
+            $user->assignRole('user');
+        } catch (RoleDoesNotExist $e) {
+            $user->delete();
+
+            return response()->json([
+                'message' => 'Registration failed. Please contact support.'
+            ], 500);
+        }
 
         /** @var \PHPOpenSourceSaver\JWTAuth\JWTGuard $guard */
         $guard = Auth::guard('api');

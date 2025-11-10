@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Route;
 // Public routes
 Route::post('/auth/register', [AuthController::class, 'register']);
 Route::post('/auth/login', [AuthController::class, 'login']);
+Route::post('/auth/refresh', [AuthController::class, 'refresh']);
 
 // Protected routes (JWT middleware)
 Route::middleware('auth:api')->group(function () {
@@ -26,21 +27,23 @@ Route::middleware('auth:api')->group(function () {
 
     // Tasks endpoints
     Route::apiResource('tasks', \App\Http\Controllers\TaskController::class);
-    Route::get('/tasks-archived', [\App\Http\Controllers\TaskController::class, 'archived']);
-    Route::post('/tasks/{task}/complete', [\App\Http\Controllers\TaskController::class, 'toggleComplete']);
-    Route::post('/tasks/{task}/archive', [\App\Http\Controllers\TaskController::class, 'archive']);
-    Route::post('/tasks/{task}/unarchive', [\App\Http\Controllers\TaskController::class, 'unarchive']);
+    
+    Route::prefix('tasks')->group(function () {
+        Route::get('/archived', [\App\Http\Controllers\TaskController::class, 'archived']);
+        Route::prefix('{task}')->group(function () {
+            Route::post('/complete', [\App\Http\Controllers\TaskController::class, 'toggleComplete']);
+            Route::post('/archive', [\App\Http\Controllers\TaskController::class, 'archive']);
+            Route::post('/unarchive', [\App\Http\Controllers\TaskController::class, 'unarchive']);
+        });
+    });
 
-    // Categories endpoints
-    Route::apiResource('categories', \App\Http\Controllers\CategoryController::class);
+    Route::apiResource('categories', \App\Http\Controllers\CategoryController::class)->only(['index', 'show']);
 });
 
-// Token refresh: allow expired tokens to request a new one
-// This route must NOT be behind 'auth:api' so that expired tokens can be refreshed
-Route::post('/auth/refresh', [AuthController::class, 'refresh']);
-
 // Admin only routes
-Route::middleware(['auth:api', 'admin'])->group(function () {
+Route::middleware(['auth:api', 'role:admin'])->group(function () {
+    Route::apiResource('categories', \App\Http\Controllers\CategoryController::class)->only(['store', 'update', 'destroy']);
+
     Route::post('/ai/chat', function () {
         return response()->json(['message' => 'AI chat endpoint - to be implemented']);
     });
