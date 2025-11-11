@@ -14,6 +14,7 @@ use PHPOpenSourceSaver\JWTAuth\Exceptions\TokenInvalidException;
 use Spatie\Permission\Exceptions\RoleDoesNotExist;
 use App\Http\Requests\Auth\RegisterRequest;
 use App\Http\Requests\Auth\LoginRequest;
+use App\Http\Resources\UserResource;
 
 class AuthController extends Controller
 {
@@ -100,10 +101,10 @@ class AuthController extends Controller
      */
     public function me(Request $request): JsonResponse
     {
-        $user = $request->user();
+        $user = $request->user()->load('roles');
 
         return response()->json([
-            'data' => $user,
+            'data' => new UserResource($user),
             'message' => 'User profile retrieved successfully.'
         ]);
     }
