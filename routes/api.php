@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\TaskController;
+use App\Http\Controllers\CategoryController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -24,20 +26,20 @@ Route::post('/auth/refresh', [AuthController::class, 'refresh']);
 Route::middleware('auth:api')->group(function () {
     Route::get('/auth/me', [AuthController::class, 'me']);
     Route::post('/auth/logout', [AuthController::class, 'logout']);
-
-    // Tasks endpoints
-    Route::apiResource('tasks', \App\Http\Controllers\TaskController::class);
     
+    // Specific task routes MUST come before apiResource to avoid conflicts
     Route::prefix('tasks')->group(function () {
-        Route::get('/archived', [\App\Http\Controllers\TaskController::class, 'archived']);
+        Route::get('archived', [TaskController::class, 'archived']);
+        
         Route::prefix('{task}')->group(function () {
-            Route::post('/complete', [\App\Http\Controllers\TaskController::class, 'toggleComplete']);
-            Route::post('/archive', [\App\Http\Controllers\TaskController::class, 'archive']);
-            Route::post('/unarchive', [\App\Http\Controllers\TaskController::class, 'unarchive']);
+            Route::post('complete', [TaskController::class, 'toggleComplete']);
+            Route::post('archive', [TaskController::class, 'archive']);
+            Route::post('unarchive', [TaskController::class, 'unarchive']);
         });
     });
 
-    Route::apiResource('categories', \App\Http\Controllers\CategoryController::class)->only(['index', 'show']);
+    Route::apiResource('tasks', TaskController::class);
+    Route::apiResource('categories', CategoryController::class)->only(['index', 'show']);
 });
 
 // Admin only routes
