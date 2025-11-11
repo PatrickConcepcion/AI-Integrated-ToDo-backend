@@ -463,6 +463,51 @@ class AiChatController extends Controller
     }
 
     /**
+     * Get user's conversation message history
+     */
+    public function getMessages(): JsonResponse
+    {
+        try {
+            $conversation = Conversation::where('user_id', Auth::id())->first();
+
+            if (!$conversation) {
+                return response()->json([
+                    'success' => true,
+                    'messages' => [],
+                ]);
+            }
+
+            $messages = Message::where('conversation_id', $conversation->id)
+                ->orderBy('created_at', 'asc')
+                ->get()
+                ->map(function ($msg) {
+                    return [
+                        'id' => $msg->id,
+                        'content' => $msg->content,
+                        'is_ai_response' => $msg->is_ai_response,
+                        'created_at' => $msg->created_at,
+                    ];
+                });
+
+            return response()->json([
+                'success' => true,
+                'messages' => $messages,
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Get Messages Error', [
+                'error' => $e->getMessage(),
+                'user_id' => Auth::id(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve messages',
+            ], 500);
+        }
+    }
+
+    /**
      * Check if message is asking about creator/developer
      */
     private function isAskingAboutCreator(string $message): bool
