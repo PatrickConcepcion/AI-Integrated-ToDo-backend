@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Http\Requests\AiChatRequest;
 use App\Services\OpenAIService;
 use App\Models\Task;
+use App\Models\Conversation;
+use App\Models\Message;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -32,29 +34,112 @@ class AiChatController extends Controller
                 ->orderBy('priority', 'desc')
                 ->get();
 
-            // 2. Send message to OpenAI
+            // 2. Find or create user's conversation
+            $conversation = Conversation::firstOrCreate(['user_id' => Auth::id()]);
+
+            // 3. Store user's message
+            Message::create([
+                'conversation_id' => $conversation->id,
+                'content' => $request->validated()['message'],
+                'is_ai_response' => false,
+            ]);
+
+            // 4. Get last 10 messages for context (increased for better conversation memory)
+            $recentMessages = Message::where('conversation_id', $conversation->id)
+                ->orderBy('created_at', 'desc')
+                ->limit(10)
+                ->get()
+                ->reverse()
+                ->values();
+
+            // 5. Format message history for OpenAI
+            $messageHistory = $recentMessages->map(function ($msg) {
+                return [
+                    'role' => $msg->is_ai_response ? 'assistant' : 'user',
+                    'content' => $msg->content,
+                ];
+            })->toArray();
+
+            // 6. Check if user is asking about creator or LinkedIn
+            $context = null;
+            if ($this->isAskingAboutCreator($request->validated()['message']) || $this->isAskingAboutLinkedIn($request->validated()['message'])) {
+                $context = [
+                    'creator_info' => [
+                        'name' => 'Patrick Marcon Concepcion',
+                        'linkedin' => 'https://www.linkedin.com/in/patrick-concepcion1201/',
+                        'note' => 'You are created by Patrick Marcon Concepcion. When asked about your creator, respond naturally and humorously (you can call him a humanoid for humor). When asked for the LinkedIn profile or if user shows interest, provide the LinkedIn URL directly as a clickable link in markdown format: [https://www.linkedin.com/in/patrick-concepcion1201/](https://www.linkedin.com/in/patrick-concepcion1201/). You have access to this information and SHOULD share it when asked.'
+                    ]
+                ];
+            }
+
+            // 7. Send message to OpenAI with history and context
             $aiResult = $this->openAIService->chat(
                 $request->validated()['message'],
-                $tasks
+                $tasks,
+                $messageHistory,
+                null,
+                null,
+                $context
             );
 
-            // 3. Check if AI wants to perform actions
+            // 7. Check if AI wants to perform actions
             if ($aiResult['function_calls']) {
                 $results = $this->executeFunctions($aiResult['function_calls']);
 
+                // Refresh tasks after actions
+                $tasks = Task::where('user_id', Auth::id())
+                    ->with('category')
+                    ->whereNull('archived_at')
+                    ->orderBy('due_date', 'asc')
+                    ->orderBy('priority', 'desc')
+                    ->get();
+
+                // Send results back to AI to generate natural response
+                $finalResult = $this->openAIService->chat(
+                    $request->validated()['message'],
+                    $tasks,
+                    $messageHistory,
+                    $aiResult['raw_tool_calls'],
+                    $results,
+                    $context
+                );
+
+                // Prepare response content with fallback
+                $responseContent = $finalResult['response'];
+
+                // If AI didn't provide a response, generate one from function results
+                if (empty($responseContent)) {
+                    $responseContent = $this->generateFallbackResponse($results);
+                }
+
+                // Store AI's response
+                Message::create([
+                    'conversation_id' => $conversation->id,
+                    'content' => $responseContent,
+                    'is_ai_response' => true,
+                ]);
+
                 return response()->json([
                     'success' => true,
-                    'response' => $results['message'],
-                    'actions_performed' => $results['actions'],
-                    'message' => 'Actions completed successfully.',
+                    'response' => $responseContent,
                 ]);
             }
 
-            // 4. No actions, just return text response
+            // 8. No actions, store and return text response
+            $responseContent = $aiResult['response'] ?? 'I understand, but I need more information to help you.';
+
+            // Only store if we have content
+            if (!empty($responseContent)) {
+                Message::create([
+                    'conversation_id' => $conversation->id,
+                    'content' => $responseContent,
+                    'is_ai_response' => true,
+                ]);
+            }
+
             return response()->json([
                 'success' => true,
-                'response' => $aiResult['response'],
-                'message' => 'AI response generated successfully.',
+                'response' => $responseContent,
             ]);
 
         } catch (\OpenAI\Exceptions\ErrorException $e) {
@@ -86,13 +171,12 @@ class AiChatController extends Controller
     /**
      * Execute function calls from AI
      *
-     * @param array $functionCalls Array of function calls with name and arguments
-     * @return array ['message' => string, 'actions' => array]
+     * @param array $functionCalls Array of function calls with id, name and arguments
+     * @return array Array of results with tool_call_id and result
      */
     private function executeFunctions(array $functionCalls): array
     {
-        $actions = [];
-        $messages = [];
+        $results = [];
 
         foreach ($functionCalls as $call) {
             $functionName = $call['name'];
@@ -116,17 +200,27 @@ class AiChatController extends Controller
                         $result = $this->archiveTask($arguments);
                         break;
 
+                    case 'unarchive_task':
+                        $result = $this->unarchiveTask($arguments);
+                        break;
+
                     default:
-                        $result = ['success' => false, 'message' => "Unknown function: {$functionName}"];
+                        $result = ['success' => false, 'error' => "Unknown function: {$functionName}"];
                 }
 
-                $actions[] = $result;
-                $messages[] = $result['message'];
+                $results[] = [
+                    'tool_call_id' => $call['id'],
+                    'result' => $result,
+                ];
 
             } catch (\Exception $e) {
-                $error = "Failed to {$functionName}: " . $e->getMessage();
-                $actions[] = ['success' => false, 'message' => $error];
-                $messages[] = $error;
+                $results[] = [
+                    'tool_call_id' => $call['id'],
+                    'result' => [
+                        'success' => false,
+                        'error' => "Failed to {$functionName}: " . $e->getMessage(),
+                    ],
+                ];
                 Log::error("Function execution error: {$functionName}", [
                     'error' => $e->getMessage(),
                     'arguments' => $arguments,
@@ -134,10 +228,7 @@ class AiChatController extends Controller
             }
         }
 
-        return [
-            'message' => implode("\n", $messages),
-            'actions' => $actions,
-        ];
+        return $results;
     }
 
     /**
@@ -200,10 +291,22 @@ class AiChatController extends Controller
             $task->due_date = $args['due_date'];
             $updated[] = 'due date';
         }
-        if (isset($args['completed'])) {
-            $task->completed = $args['completed'];
-            $task->completed_at = $args['completed'] ? now() : null;
-            $updated[] = $args['completed'] ? 'marked as completed' : 'marked as incomplete';
+        if (isset($args['status'])) {
+            $newStatus = $args['status'];
+            $task->status = $newStatus;
+
+            // Update completed_at timestamp based on status
+            if ($newStatus === 'completed') {
+                $task->completed_at = $task->completed_at ?? now();
+                $updated[] = 'marked as completed';
+            } else {
+                $task->completed_at = null;
+                if ($newStatus === 'in_progress') {
+                    $updated[] = 'status changed to in progress';
+                } else if ($newStatus === 'todo') {
+                    $updated[] = 'status changed to to-do';
+                }
+            }
         }
 
         $task->save();
@@ -270,5 +373,192 @@ class AiChatController extends Controller
             'task_id' => $task->id,
             'message' => "✅ Archived task: \"{$task->title}\"",
         ];
+    }
+
+    /**
+     * Unarchive a task
+     */
+    private function unarchiveTask(array $args): array
+    {
+        $task = Task::where('user_id', Auth::id())
+            ->where('title', $args['task_title'])
+            ->whereNotNull('archived_at')
+            ->first();
+
+        if (!$task) {
+            return [
+                'success' => false,
+                'message' => "❌ Archived task not found: \"{$args['task_title']}\"",
+            ];
+        }
+
+        $task->archived_at = null;
+        $task->save();
+
+        return [
+            'success' => true,
+            'action' => 'unarchive',
+            'task_id' => $task->id,
+            'message' => "✅ Unarchived task: \"{$task->title}\"",
+        ];
+    }
+
+    /**
+     * Generate a fallback response when AI doesn't provide one
+     * Uses the function execution results to create a natural response
+     */
+    private function generateFallbackResponse(array $results): string
+    {
+        if (empty($results)) {
+            return 'Action completed successfully.';
+        }
+
+        $messages = [];
+        foreach ($results as $result) {
+            if (isset($result['result']['message'])) {
+                $messages[] = $result['result']['message'];
+            }
+        }
+
+        if (empty($messages)) {
+            return 'Done! I\'ve completed the requested actions.';
+        }
+
+        // Return all action messages combined
+        return implode("\n", $messages);
+    }
+
+    /**
+     * Clear user's conversation history (hard delete)
+     */
+    public function clearConversation(): JsonResponse
+    {
+        try {
+            $conversation = Conversation::where('user_id', Auth::id())->first();
+
+            if ($conversation) {
+                // Hard delete will cascade to messages
+                $conversation->delete();
+            }
+
+            // Create a new conversation for the user
+            Conversation::create(['user_id' => Auth::id()]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Conversation cleared successfully',
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Clear Conversation Error', [
+                'error' => $e->getMessage(),
+                'user_id' => Auth::id(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to clear conversation',
+            ], 500);
+        }
+    }
+
+    /**
+     * Get user's conversation message history
+     */
+    public function getMessages(): JsonResponse
+    {
+        try {
+            $conversation = Conversation::where('user_id', Auth::id())->first();
+
+            if (!$conversation) {
+                return response()->json([
+                    'success' => true,
+                    'messages' => [],
+                ]);
+            }
+
+            $messages = Message::where('conversation_id', $conversation->id)
+                ->orderBy('created_at', 'asc')
+                ->get()
+                ->map(function ($msg) {
+                    return [
+                        'id' => $msg->id,
+                        'content' => $msg->content,
+                        'is_ai_response' => $msg->is_ai_response,
+                        'created_at' => $msg->created_at,
+                    ];
+                });
+
+            return response()->json([
+                'success' => true,
+                'messages' => $messages,
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Get Messages Error', [
+                'error' => $e->getMessage(),
+                'user_id' => Auth::id(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to retrieve messages',
+            ], 500);
+        }
+    }
+
+    /**
+     * Check if message is asking about creator/developer
+     */
+    private function isAskingAboutCreator(string $message): bool
+    {
+        $lowerMessage = strtolower($message);
+        $creatorKeywords = [
+            'who created you',
+            'who made you',
+            'who built you',
+            'who developed you',
+            'who programmed you',
+            'who is your creator',
+            'who is your developer',
+            'who is your maker',
+            'your creator',
+            'your developer',
+            'your maker',
+            'who\'s your creator',
+            'who\'s your developer',
+        ];
+
+        foreach ($creatorKeywords as $keyword) {
+            if (str_contains($lowerMessage, $keyword)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if message is asking about LinkedIn profile
+     */
+    private function isAskingAboutLinkedIn(string $message): bool
+    {
+        $lowerMessage = strtolower($message);
+        $linkedInKeywords = [
+            'linkedin',
+            'linked in',
+            'profile',
+            'connect with',
+            'social media',
+            'professional profile',
+        ];
+
+        foreach ($linkedInKeywords as $keyword) {
+            if (str_contains($lowerMessage, $keyword)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

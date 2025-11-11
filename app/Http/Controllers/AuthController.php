@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Conversation;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use PHPOpenSourceSaver\JWTAuth\Exceptions\JWTException;
@@ -25,38 +27,63 @@ class AuthController extends Controller
     {
         $validated = $request->validated();
 
-        $user = User::create([
-            'name' => $validated['name'],
-            'email' => $validated['email'],
-            'password' => Hash::make($validated['password']),
-        ]);
-
         try {
-            $user->assignRole('user');
+            $result = DB::transaction(function () use ($validated) {
+                // Create user
+                $user = User::create([
+                    'name' => $validated['name'],
+                    'email' => $validated['email'],
+                    'password' => Hash::make($validated['password']),
+                ]);
+
+                // Assign role
+                $user->assignRole('user');
+
+                // Create conversation
+                Conversation::create(['user_id' => $user->id]);
+
+                return $user;
+            });
+
+            // Login the user and generate token
+            /** @var \PHPOpenSourceSaver\JWTAuth\JWTGuard $guard */
+            $guard = Auth::guard('api');
+            $token = $guard->login($result);
+
+            // Log token issuance details for verification
+            $ttlMinutes = $guard->factory()->getTTL();
+            Log::info('Token issued on register', [
+                'time' => now()->toDateTimeString(),
+                'user_id' => $result->id,
+                'ttl_minutes' => $ttlMinutes,
+                'ttl_seconds' => $ttlMinutes * 60,
+                'refresh_ttl_minutes' => config('jwt.refresh_ttl'),
+                'refresh_iat' => config('jwt.refresh_iat'),
+            ]);
+
+            return $this->respondWithToken($token);
+
         } catch (RoleDoesNotExist $e) {
-            $user->delete();
+            Log::error('Role assignment failed during registration', [
+                'error' => $e->getMessage(),
+                'email' => $validated['email'],
+            ]);
 
             return response()->json([
                 'message' => 'Registration failed. Please contact support.'
             ], 500);
+
+        } catch (\Exception $e) {
+            Log::error('Registration failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'email' => $validated['email'],
+            ]);
+
+            return response()->json([
+                'message' => 'Registration failed. Please try again.'
+            ], 500);
         }
-
-        /** @var \PHPOpenSourceSaver\JWTAuth\JWTGuard $guard */
-        $guard = Auth::guard('api');
-        $token = $guard->login($user);
-
-        // Log token issuance details for verification
-        $ttlMinutes = $guard->factory()->getTTL();
-        Log::info('Token issued on register', [
-            'time' => now()->toDateTimeString(),
-            'user_id' => $user->id,
-            'ttl_minutes' => $ttlMinutes,
-            'ttl_seconds' => $ttlMinutes * 60,
-            'refresh_ttl_minutes' => config('jwt.refresh_ttl'),
-            'refresh_iat' => config('jwt.refresh_iat'),
-        ]);
-
-        return $this->respondWithToken($token);
     }
 
     /**
@@ -64,14 +91,12 @@ class AuthController extends Controller
      */
     public function login(LoginRequest $request): JsonResponse
     {
-        $credentials = $request->validated();
-
         /** @var \PHPOpenSourceSaver\JWTAuth\JWTGuard $guard */
         $guard = Auth::guard('api');
-        if (! $token = $guard->attempt($credentials)) {
+        if (! $token = $guard->attempt($request->validated())) {
             // Log failed login attempt
             Log::warning('Failed login attempt', [
-                'email' => $credentials['email'],
+                'email' => $request->validated()['email'],
                 'ip' => $request->ip(),
                 'user_agent' => $request->userAgent(),
             ]);
@@ -92,6 +117,9 @@ class AuthController extends Controller
             'refresh_ttl_minutes' => config('jwt.refresh_ttl'),
             'refresh_iat' => config('jwt.refresh_iat'),
         ]);
+
+        // Ensure user has a conversation
+        Conversation::firstOrCreate(['user_id' => $user->id]);
 
         return $this->respondWithToken($token);
     }

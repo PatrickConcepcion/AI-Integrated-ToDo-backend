@@ -44,6 +44,8 @@ Route::middleware('auth:api')->group(function () {
 
     // AI Assistant - available to all authenticated users
     Route::post('/ai/chat', [AiChatController::class, 'chat']);
+    Route::get('/ai/messages', [AiChatController::class, 'getMessages']);
+    Route::delete('/ai/conversations', [AiChatController::class, 'clearConversation']);
 });
 
 // Admin only routes
