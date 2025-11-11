@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\TaskController;
 use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\AiChatController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -40,13 +41,12 @@ Route::middleware('auth:api')->group(function () {
 
     Route::apiResource('tasks', TaskController::class);
     Route::apiResource('categories', CategoryController::class)->only(['index', 'show']);
+
+    // AI Assistant - available to all authenticated users
+    Route::post('/ai/chat', [AiChatController::class, 'chat']);
 });
 
 // Admin only routes
 Route::middleware(['auth:api', 'role:admin'])->group(function () {
     Route::apiResource('categories', \App\Http\Controllers\CategoryController::class)->only(['store', 'update', 'destroy']);
-
-    Route::post('/ai/chat', function () {
-        return response()->json(['message' => 'AI chat endpoint - to be implemented']);
-    });
 });

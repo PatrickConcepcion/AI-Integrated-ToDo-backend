@@ -99,14 +99,12 @@ class AuthController extends Controller
     /**
      * Return the authenticated user's profile.
      */
-    public function me(Request $request): JsonResponse
+    public function me(Request $request)
     {
         $user = $request->user()->load('roles');
 
-        return response()->json([
-            'data' => new UserResource($user),
-            'message' => 'User profile retrieved successfully.'
-        ]);
+        return (new UserResource($user))
+            ->additional(['message' => 'User profile retrieved successfully.']);
     }
 
     /**
