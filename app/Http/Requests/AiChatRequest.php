@@ -31,6 +31,27 @@ class AiChatRequest extends FormRequest
                 'min:1',
                 'max:1000',
             ],
+            'context' => [
+                'nullable',
+                'array',
+            ],
+            'context.creator_info' => [
+                'nullable',
+                'array',
+            ],
+            'context.creator_info.name' => [
+                'nullable',
+                'string',
+            ],
+            'context.creator_info.linkedin' => [
+                'nullable',
+                'string',
+                'url',
+            ],
+            'context.creator_info.note' => [
+                'nullable',
+                'string',
+            ],
         ];
     }
 
