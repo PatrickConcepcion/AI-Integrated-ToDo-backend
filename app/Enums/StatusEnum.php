@@ -7,6 +7,7 @@ enum StatusEnum: string
     case Todo = 'todo';
     case InProgress = 'in_progress';
     case Completed = 'completed';
+    case Archived = 'archived';
 
     public static function values(): array
     {

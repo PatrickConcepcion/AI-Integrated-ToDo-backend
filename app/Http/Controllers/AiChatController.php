@@ -29,7 +29,7 @@ class AiChatController extends Controller
             // 1. Get authenticated user's tasks
             $tasks = Task::where('user_id', Auth::id())
                 ->with('category')
-                ->whereNull('archived_at')
+                ->where('status', '!=', 'archived')
                 ->orderBy('due_date', 'asc')
                 ->orderBy('priority', 'desc')
                 ->get();
@@ -89,7 +89,7 @@ class AiChatController extends Controller
                 // Refresh tasks after actions
                 $tasks = Task::where('user_id', Auth::id())
                     ->with('category')
-                    ->whereNull('archived_at')
+                    ->where('status', '!=', 'archived')
                     ->orderBy('due_date', 'asc')
                     ->orderBy('priority', 'desc')
                     ->get();
@@ -196,14 +196,6 @@ class AiChatController extends Controller
                         $result = $this->deleteTask($arguments);
                         break;
 
-                    case 'archive_task':
-                        $result = $this->archiveTask($arguments);
-                        break;
-
-                    case 'unarchive_task':
-                        $result = $this->unarchiveTask($arguments);
-                        break;
-
                     default:
                         $result = ['success' => false, 'error' => "Unknown function: {$functionName}"];
                 }
@@ -249,9 +241,10 @@ class AiChatController extends Controller
             'success' => true,
             'action' => 'create',
             'task_id' => $task->id,
+            // Ensure we convert enum instances to string values when building messages
             'message' => "✅ Created task: \"{$task->title}\"" .
                          ($task->due_date ? " (Due: {$task->due_date})" : '') .
-                         ($task->priority ? " [Priority: {$task->priority}]" : ''),
+                         ((isset($task->priority) && $task->priority instanceof \App\Enums\PriorityEnum) ? " [Priority: {$task->priority->value}]" : ($task->priority ? " [Priority: {$task->priority}]" : '')),
         ];
     }
 
@@ -260,10 +253,9 @@ class AiChatController extends Controller
      */
     private function updateTask(array $args): array
     {
-        // Find task by exact title match
+        // Find task by exact title match (including archived tasks so they can be unarchived)
         $task = Task::where('user_id', Auth::id())
             ->where('title', $args['task_title'])
-            ->whereNull('archived_at')
             ->first();
 
         if (!$task) {
@@ -293,19 +285,20 @@ class AiChatController extends Controller
         }
         if (isset($args['status'])) {
             $newStatus = $args['status'];
+
+            // Keep track of previous status for history and potential restore operations
+            $task->previous_status = $task->status;
             $task->status = $newStatus;
 
-            // Update completed_at timestamp based on status
-            if ($newStatus === 'completed') {
-                $task->completed_at = $task->completed_at ?? now();
+            // Update message based on status change
+            if ($newStatus === 'archived') {
+                $updated[] = 'archived';
+            } else if ($newStatus === 'completed') {
                 $updated[] = 'marked as completed';
-            } else {
-                $task->completed_at = null;
-                if ($newStatus === 'in_progress') {
-                    $updated[] = 'status changed to in progress';
-                } else if ($newStatus === 'todo') {
-                    $updated[] = 'status changed to to-do';
-                }
+            } else if ($newStatus === 'in_progress') {
+                $updated[] = 'status changed to in progress';
+            } else if ($newStatus === 'todo') {
+                $updated[] = 'status changed to to-do';
             }
         }
 
@@ -325,9 +318,9 @@ class AiChatController extends Controller
      */
     private function deleteTask(array $args): array
     {
+        // Find task by exact title match (including archived tasks)
         $task = Task::where('user_id', Auth::id())
             ->where('title', $args['task_title'])
-            ->whereNull('archived_at')
             ->first();
 
         if (!$task) {
@@ -348,62 +341,6 @@ class AiChatController extends Controller
     }
 
     /**
-     * Archive a task
-     */
-    private function archiveTask(array $args): array
-    {
-        $task = Task::where('user_id', Auth::id())
-            ->where('title', $args['task_title'])
-            ->whereNull('archived_at')
-            ->first();
-
-        if (!$task) {
-            return [
-                'success' => false,
-                'message' => "❌ Task not found: \"{$args['task_title']}\"",
-            ];
-        }
-
-        $task->archived_at = now();
-        $task->save();
-
-        return [
-            'success' => true,
-            'action' => 'archive',
-            'task_id' => $task->id,
-            'message' => "✅ Archived task: \"{$task->title}\"",
-        ];
-    }
-
-    /**
-     * Unarchive a task
-     */
-    private function unarchiveTask(array $args): array
-    {
-        $task = Task::where('user_id', Auth::id())
-            ->where('title', $args['task_title'])
-            ->whereNotNull('archived_at')
-            ->first();
-
-        if (!$task) {
-            return [
-                'success' => false,
-                'message' => "❌ Archived task not found: \"{$args['task_title']}\"",
-            ];
-        }
-
-        $task->archived_at = null;
-        $task->save();
-
-        return [
-            'success' => true,
-            'action' => 'unarchive',
-            'task_id' => $task->id,
-            'message' => "✅ Unarchived task: \"{$task->title}\"",
-        ];
-    }
-
-    /**
      * Generate a fallback response when AI doesn't provide one
      * Uses the function execution results to create a natural response
      */
@@ -415,8 +352,13 @@ class AiChatController extends Controller
 
         $messages = [];
         foreach ($results as $result) {
+            // Extract message from result
             if (isset($result['result']['message'])) {
                 $messages[] = $result['result']['message'];
+            } elseif (isset($result['result']['success']) && $result['result']['success']) {
+                // Fallback: create message from action type
+                $action = $result['result']['action'] ?? 'action';
+                $messages[] = "✅ " . ucfirst($action) . " completed successfully";
             }
         }
 

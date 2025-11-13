@@ -106,6 +106,25 @@ class AuthController extends Controller
             ], 401);
         }
 
+        // Check if user is banned
+        $user = $guard->user();
+        if ($user && $user->is_banned) {
+            // Log banned user login attempt
+            Log::warning('Banned user login attempt', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'ip' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+
+            // Invalidate the token we just created
+            $guard->logout();
+
+            return response()->json([
+                'message' => 'Your account has been banned. Please contact support.'
+            ], 403);
+        }
+
         // Log successful login
         $user = $guard->user();
         $ttlMinutes = $guard->factory()->getTTL();
@@ -170,6 +189,24 @@ class AuthController extends Controller
             /** @var \PHPOpenSourceSaver\JWTAuth\JWTGuard $guard */
             $guard = Auth::guard('api');
             $token = $guard->refresh();
+
+            // Check if the authenticated user is banned
+            $user = $guard->user();
+            if ($user && $user->is_banned) {
+                // Log banned user refresh attempt
+                Log::warning('Banned user token refresh attempt', [
+                    'user_id' => $user->id,
+                    'email' => $user->email,
+                    'ip' => $request->ip(),
+                ]);
+
+                // Invalidate the token
+                $guard->logout();
+
+                return response()->json([
+                    'message' => 'Your account has been banned. Please contact support.'
+                ], 403);
+            }
 
             // Log successful refresh with TTL info
             $ttlSeconds = $guard->factory()->getTTL() * 60;
@@ -250,6 +287,43 @@ class AuthController extends Controller
             'access_token' => $token,
             'token_type' => 'bearer',
             'expires_in' => $ttlSeconds,
+        ]);
+    }
+
+    /**
+     * Get all users (admin only).
+     */
+    public function index(): JsonResponse
+    {
+        $users = User::with('roles')->get();
+
+        return response()->json([
+            'data' => UserResource::collection($users),
+            'message' => 'Users retrieved successfully.',
+        ]);
+    }
+
+    /**
+     * Ban a user (admin only).
+     */
+    public function banUser(User $user): JsonResponse
+    {
+        $user->update(['is_banned' => true]);
+
+        return response()->json([
+            'message' => 'User banned successfully.',
+        ]);
+    }
+
+    /**
+     * Unban a user (admin only).
+     */
+    public function unbanUser(User $user): JsonResponse
+    {
+        $user->update(['is_banned' => false]);
+
+        return response()->json([
+            'message' => 'User unbanned successfully.',
         ]);
     }
 }
