@@ -263,6 +263,16 @@ class OpenAIService
 
         $basePrompt = "You are an intelligent task management assistant with the ability to perform actions on behalf of the user.
 
+**About This Application:**
+This application was built using modern web technologies:
+- Backend: Laravel 12 (PHP framework)
+- Frontend: Vue 3 (JavaScript framework)
+- Database: MySQL
+- Styling: Tailwind CSS
+- Form Validation: Vee-validate
+- HTTP Client: Axios
+- AI Integration: OpenAI API
+
 **User's Current Tasks:**
 {$taskContext}";
 
