@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\Auth\ChangePasswordRequest;
+use App\Http\Requests\Auth\ForgotPasswordRequest;
+use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Models\Conversation;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -10,6 +13,9 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Support\Str;
 use PHPOpenSourceSaver\JWTAuth\Exceptions\JWTException;
 use PHPOpenSourceSaver\JWTAuth\Exceptions\TokenExpiredException;
 use PHPOpenSourceSaver\JWTAuth\Exceptions\TokenInvalidException;
@@ -272,6 +278,89 @@ class AuthController extends Controller
                 'trace' => config('app.debug') ? $e->getTrace() : null,
             ], 500);
         }
+    }
+
+    /**
+     * Handle a password reset link request for a guest user.
+     */
+    public function forgotPassword(ForgotPasswordRequest $request): JsonResponse
+    {
+        $email = $request->input('email');
+
+        $status = Password::sendResetLink(['email' => $email]);
+
+        if ($status === Password::RESET_LINK_SENT) {
+            return response()->json([
+                'message' => 'If an account exists for that email, a password reset link has been sent.',
+            ]);
+        }
+
+        Log::warning('Password reset link sending returned non-success status', [
+            'email' => $email,
+            'status' => $status,
+        ]);
+
+        return response()->json([
+            'message' => 'If an account exists for that email, a password reset link has been sent.',
+        ]);
+    }
+
+    /**
+     * Handle an incoming password reset request.
+     */
+    public function resetPassword(ResetPasswordRequest $request): JsonResponse
+    {
+        $status = Password::reset(
+            $request->only('email', 'password', 'password_confirmation', 'token'),
+            function (User $user, string $password): void {
+                $user->forceFill([
+                    'password' => Hash::make($password),
+                ])->setRememberToken(Str::random(60));
+
+                $user->save();
+
+                event(new PasswordReset($user));
+            }
+        );
+
+        if ($status === Password::PASSWORD_RESET) {
+            return response()->json([
+                'message' => 'Password reset successfully.',
+            ]);
+        }
+
+        return response()->json([
+            'message' => __($status),
+        ], 422);
+    }
+
+    /**
+     * Change password for an authenticated user.
+     */
+    public function changePassword(ChangePasswordRequest $request): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        if (! $user) {
+            return response()->json([
+                'message' => 'Not authenticated.',
+            ], 401);
+        }
+
+        if (! Hash::check($request->input('current_password'), $user->password)) {
+            return response()->json([
+                'message' => 'The current password is incorrect.',
+            ], 422);
+        }
+
+        $user->password = Hash::make($request->input('password'));
+        $user->setRememberToken(Str::random(60));
+        $user->save();
+
+        return response()->json([
+            'message' => 'Password updated successfully!',
+        ]);
     }
 
     /**

@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Auth\Notifications\ResetPassword as ResetPasswordNotification;
 use PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject;
 use Spatie\Permission\Traits\HasRoles;
 
@@ -97,5 +98,21 @@ class User extends Authenticatable implements JWTSubject
     public function conversation(): HasOne
     {
         return $this->hasOne(Conversation::class);
+    }
+
+    /**
+     * Send the password reset notification with a SPA-friendly URL.
+     *
+     * @param  string  $token
+     */
+    public function sendPasswordResetNotification($token): void
+    {
+        ResetPasswordNotification::createUrlUsing(function ($notifiable, string $token): string {
+            $frontendUrl = rtrim((string) config('app.frontend_url', config('app.url')), '/');
+
+            return $frontendUrl.'/reset-password?token='.$token.'&email='.urlencode((string) $notifiable->getEmailForPasswordReset());
+        });
+
+        $this->notify(new ResetPasswordNotification($token));
     }
 }
