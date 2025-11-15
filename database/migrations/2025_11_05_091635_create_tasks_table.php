@@ -23,10 +23,9 @@ return new class extends Migration
                   ->default(PriorityEnum::Medium->value);
             $table->enum('status', StatusEnum::values())
                   ->default(StatusEnum::Todo->value);
+            $table->string('previous_status')->nullable();
             $table->date('due_date')->nullable();
             $table->text('notes')->nullable();
-            $table->timestamp('completed_at')->nullable();
-            $table->timestamp('archived_at')->nullable();
             $table->timestamps();
         });
     }

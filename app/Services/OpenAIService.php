@@ -107,9 +107,14 @@ class OpenAIService
         // Check if model supports function calling
         $modelSupportsTools = !str_contains(config('openai.model'), 'nano');
 
-        if ($modelSupportsTools) {
+        // If we just executed functions, force a text response instead of allowing more function calls
+        if ($modelSupportsTools && !$toolResults) {
             $requestParams['tools'] = $this->getToolDefinitions();
             $requestParams['tool_choice'] = 'auto';
+        } elseif ($modelSupportsTools && $toolResults) {
+            // After function execution, include tools but force none to get text response
+            $requestParams['tools'] = $this->getToolDefinitions();
+            $requestParams['tool_choice'] = 'none';
         }
 
         $response = $this->client->chat()->create($requestParams);
@@ -221,8 +226,8 @@ class OpenAIService
                             ],
                             'status' => [
                                 'type' => 'string',
-                                'enum' => ['todo', 'in_progress', 'completed'],
-                                'description' => 'Task status: "todo" (not started), "in_progress" (currently working on it), or "completed" (finished)',
+                                'enum' => ['todo', 'in_progress', 'completed', 'archived'],
+                                'description' => 'Task status: "todo" (not started), "in_progress" (currently working on it), "completed" (finished), or "archived" (hidden from active list)',
                             ],
                         ],
                         'required' => ['task_title'],
@@ -246,40 +251,6 @@ class OpenAIService
                     ],
                 ],
             ],
-            [
-                'type' => 'function',
-                'function' => [
-                    'name' => 'archive_task',
-                    'description' => 'Archive a task. Use the exact task title from the user\'s task list.',
-                    'parameters' => [
-                        'type' => 'object',
-                        'properties' => [
-                            'task_title' => [
-                                'type' => 'string',
-                                'description' => 'The EXACT title of the task to archive',
-                            ],
-                        ],
-                        'required' => ['task_title'],
-                    ],
-                ],
-            ],
-            [
-                'type' => 'function',
-                'function' => [
-                    'name' => 'unarchive_task',
-                    'description' => 'Unarchive a task to restore it. Note: archived tasks are not shown in the user\'s current task list.',
-                    'parameters' => [
-                        'type' => 'object',
-                        'properties' => [
-                            'task_title' => [
-                                'type' => 'string',
-                                'description' => 'The EXACT title of the task to unarchive',
-                            ],
-                        ],
-                        'required' => ['task_title'],
-                    ],
-                ],
-            ],
         ];
     }
 
@@ -291,6 +262,16 @@ class OpenAIService
         $taskContext = $this->formatTasksForAI($tasks);
 
         $basePrompt = "You are an intelligent task management assistant with the ability to perform actions on behalf of the user.
+
+**About This Application:**
+This application was built using modern web technologies:
+- Backend: Laravel 12 (PHP framework)
+- Frontend: Vue 3 (JavaScript framework)
+- Database: MySQL
+- Styling: Tailwind CSS
+- Form Validation: Vee-validate
+- HTTP Client: Axios
+- AI Integration: OpenAI API
 
 **User's Current Tasks:**
 {$taskContext}";
@@ -324,39 +305,54 @@ class OpenAIService
 - CREATE new tasks when user asks
 - UPDATE existing tasks (change title, priority, due date, status)
 - DELETE tasks when user requests
-- ARCHIVE tasks to hide them from the active list
-- UNARCHIVE tasks to restore them to the active list
 - Analyze and provide insights about tasks
 - Answer questions about task management
 
 **Task Status Options:**
-Tasks have three status levels:
+Tasks have four status levels:
 1. **todo**: Not started yet (synonyms: pending, not started, haven't done this, to-do)
 2. **in_progress**: Currently working on it (synonyms: doing, working on, in progress, started)
 3. **completed**: Finished (synonyms: done, finished, complete, completed)
+4. **archived**: Hidden from active list (synonyms: archive, hide, store away, remove from list)
+
+**CRITICAL: Status Transition Rules:**
+- You can change a task to ANY status from ANY other status - there are NO restrictions!
+- Tasks can be archived regardless of whether they are todo, in_progress, or completed
+- Tasks can be unarchived back to any status
+- Tasks can move from completed to in_progress, from in_progress to todo, etc.
+- NEVER tell the user a status change is not allowed - just do it!
 
 **Important Instructions:**
 - USE THE FUNCTIONS provided for all task operations
-- For task updates/deletes/archives, use the EXACT task title from the list above
+- For task updates/deletes, use the EXACT task title from the list above
 - UNDERSTAND natural language and synonyms - don't require exact keywords
+- DO NOT make up restrictions that don't exist in the system
 
 **Natural Language Understanding Guide:**
-When user says... → Use this status:
+When user says... → Use this status in update_task:
 - 'mark as done', 'complete it', 'finish it', 'I finished this' → status='completed'
 - 'I'm working on it', 'doing it', 'start it', 'in progress', 'move to doing' → status='in_progress'
 - 'mark as todo', 'not started', 'haven't done', 'pending', 'reset it' → status='todo'
-- 'delete X', 'remove X' → DELETE it
-- 'archive X', 'hide X' → ARCHIVE it
-- 'unarchive X', 'restore X' → UNARCHIVE it
+- 'archive X', 'hide X', 'put away X', 'remove from list X' → status='archived'
+- 'unarchive X', 'restore X', 'bring back X' → status to its previous_status (if available)
+- 'put it back to the previous status', 'what was it before' → reference previous_status field
+- 'delete X', 'remove X' → DELETE it (permanently removes)
+
+**Status History Tracking:**
+Every task maintains a `previous_status` field that tracks the last status it was in. You can reference this to:
+- Help users restore tasks to their previous state
+- Answer questions about what a task was before
+- Provide better context when making status changes
 
 **Action Examples:**
 - 'add a task', 'create reminder', 'new todo' → CREATE it
 - 'change priority to high', 'make it urgent' → UPDATE with priority='high'
 - 'due tomorrow', 'deadline next week' → UPDATE with due_date
+- 'move to doing', 'start this', 'begin working on it' → UPDATE with status='in_progress'
 
 **Always:**
 - Be proactive and interpret user intent
-- Confirm actions clearly: 'I've marked X as completed', 'I've moved X to in progress', etc.
+- Confirm actions clearly: 'I've marked X as completed', 'I've archived X', 'I've moved X to in progress', etc.
 - Be concise and friendly";
 
         return $basePrompt;
@@ -374,22 +370,26 @@ When user says... → Use this status:
         $formatted = [];
 
         foreach ($tasks as $task) {
+            // Get string values from enums
+            $statusValue = $task->status instanceof \App\Enums\StatusEnum ? $task->status->value : $task->status;
+            $priorityValue = $task->priority instanceof \App\Enums\PriorityEnum ? $task->priority->value : ($task->priority ?? 'medium');
+
             // Display status with icons
-            $statusIcon = match($task->status) {
+            $statusIcon = match($statusValue) {
                 'completed' => '✓',
                 'in_progress' => '▶',
                 'todo' => '○',
                 default => '○'
             };
-            $statusText = match($task->status) {
+            $statusText = match($statusValue) {
                 'completed' => 'Completed',
                 'in_progress' => 'In Progress',
                 'todo' => 'To-Do',
                 default => 'To-Do'
             };
             $status = "{$statusIcon} {$statusText}";
-            $isCompleted = $task->status === 'completed';
-            $priority = strtoupper($task->priority ?? 'medium');
+            $isCompleted = $statusValue === 'completed';
+            $priority = strtoupper($priorityValue);
             $category = $task->category ? " [{$task->category->name}]" : '';
             $dueDate = $task->due_date ? " (Due: {$task->due_date})" : '';
 

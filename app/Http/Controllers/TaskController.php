@@ -34,7 +34,7 @@ class TaskController extends Controller
                 return $q->whereDate('due_date', $request->due_date);
             })
             ->when($request->has('overdue') && $request->overdue === 'true', function ($q) {
-                return $q->where('due_date', '<', Carbon::now())->whereNull('completed_at');
+                return $q->where('due_date', '<', Carbon::now())->where('status', '!=', 'completed');
             });
 
         // Sort by due date or created date
@@ -58,7 +58,7 @@ class TaskController extends Controller
         $tasks = Task::where('user_id', Auth::id())
             ->archived()
             ->with('category')
-            ->orderBy('archived_at', 'desc')
+            ->orderBy('updated_at', 'desc')
             ->get();
 
         return response()->json([
@@ -107,11 +107,6 @@ class TaskController extends Controller
         $this->authorize('update', $task);
 
         $validated = $request->validated();
-
-        if (array_key_exists('status', $validated)) {
-            $task->completed_at = $validated['status'] === 'completed' ? Carbon::now() : null;
-        }
-
         $task->update($validated);
         $task->load('category');
 
@@ -143,9 +138,10 @@ class TaskController extends Controller
     {
         $this->authorize('update', $task);
 
-        $isCompleting = $task->completed_at === null;
+        $isCompleting = $task->status !== 'completed';
 
-        $task->completed_at = $isCompleting ? Carbon::now() : null;
+        // Track previous status for history
+        $task->previous_status = $task->status;
         $task->status = $isCompleting ? 'completed' : 'todo';
         $task->save();
         $message = $isCompleting ? 'Task marked as completed.' : 'Task marked as incomplete.';
@@ -165,13 +161,15 @@ class TaskController extends Controller
     {
         $this->authorize('update', $task);
 
-        if ($task->archived_at !== null) {
+        if ($task->status === 'archived') {
             return response()->json([
                 'message' => 'Task is already archived.'
             ], 400);
         }
 
-        $task->archived_at = Carbon::now();
+        // Store current status before archiving for potential restore
+        $task->previous_status = $task->status;
+        $task->status = 'archived';
         $task->save();
         $task->load('category');
 
@@ -188,13 +186,15 @@ class TaskController extends Controller
     {
         $this->authorize('update', $task);
 
-        if ($task->archived_at === null) {
+        if ($task->status !== 'archived') {
             return response()->json([
                 'message' => 'Task is not archived.'
             ], 400);
         }
 
-        $task->archived_at = null;
+        // Restore previous status or default to 'todo'
+        $task->status = $task->previous_status ?? 'todo';
+        $task->previous_status = null;
         $task->save();
         $task->load('category');
 
