@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Builder;
 
 class Task extends Model
 {
@@ -22,10 +23,9 @@ class Task extends Model
         'description',
         'priority',
         'status',
+        'previous_status',
         'due_date',
         'notes',
-        'completed_at',
-        'archived_at',
     ];
 
     /**
@@ -33,14 +33,20 @@ class Task extends Model
      *
      * @return array<string, string>
      */
-    protected function casts(): array
-    {
-        return [
-            'due_date' => 'date',
-            'completed_at' => 'datetime',
-            'archived_at' => 'datetime',
-        ];
-    }
+    /**
+     * The attributes that should be cast.
+     *
+     * Using the $casts property ensures Eloquent will cast attributes
+     * to the appropriate types (including backed enums) when getting/setting.
+     *
+     * @var array<string, string>
+     */
+    protected $casts = [
+        'due_date' => 'date',
+        'priority' => \App\Enums\PriorityEnum::class,
+        'status' => \App\Enums\StatusEnum::class,
+        'previous_status' => \App\Enums\StatusEnum::class,
+    ];
 
     /**
      * Get the user that owns the task.
@@ -61,16 +67,16 @@ class Task extends Model
     /**
      * Scope a query to only include non-archived tasks.
      */
-    public function scopeActive($query)
+    public function scopeActive(Builder $query)
     {
-        return $query->whereNull('archived_at');
+        return $query->where('status', '!=', 'archived');
     }
 
     /**
      * Scope a query to only include archived tasks.
      */
-    public function scopeArchived($query)
+    public function scopeArchived(Builder $query)
     {
-        return $query->whereNotNull('archived_at');
+        return $query->where('status', 'archived');
     }
 }

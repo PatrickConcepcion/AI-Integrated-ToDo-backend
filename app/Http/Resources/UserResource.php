@@ -20,6 +20,7 @@ class UserResource extends JsonResource
             'email' => $this->email,
             'roles' => $this->getRoleNames(),
             'email_verified_at' => $this->email_verified_at,
+            'is_banned' => $this->is_banned,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

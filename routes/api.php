@@ -51,4 +51,7 @@ Route::middleware('auth:api')->group(function () {
 // Admin only routes
 Route::middleware(['auth:api', 'role:admin'])->group(function () {
     Route::apiResource('categories', \App\Http\Controllers\CategoryController::class)->only(['store', 'update', 'destroy']);
+    Route::get('/admin/users', [AuthController::class, 'index']);
+    Route::post('/admin/users/{user}/ban', [AuthController::class, 'banUser']);
+    Route::post('/admin/users/{user}/unban', [AuthController::class, 'unbanUser']);
 });
