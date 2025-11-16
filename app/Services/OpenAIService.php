@@ -360,6 +360,7 @@ Every task maintains a `previous_status` field that tracks the last status it wa
 
     /**
      * Format user's tasks into readable context for AI
+     * @param Collection<int, Task> $tasks
      */
     private function formatTasksForAI(Collection $tasks): string
     {
