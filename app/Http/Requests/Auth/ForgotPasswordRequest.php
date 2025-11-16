@@ -1,18 +1,17 @@
 <?php
 
-namespace App\Http\Requests\Category;
+namespace App\Http\Requests\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class StoreRequest extends FormRequest
+class ForgotPasswordRequest extends FormRequest
 {
     /**
      * Determine if the user is authorized to make this request.
      */
     public function authorize(): bool
     {
-        // Only admins can create categories
-        return $this->user()?->hasRole('admin');
+        return true;
     }
 
     /**
@@ -23,9 +22,8 @@ class StoreRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => ['required', 'string', 'max:255', 'unique:categories,name'],
-            'description' => ['nullable', 'string', 'max:500'],
-            'color' => ['required', 'string', 'regex:/^#[0-9A-Fa-f]{6}$/'],
+            'email' => ['required', 'email'],
         ];
     }
 }
+

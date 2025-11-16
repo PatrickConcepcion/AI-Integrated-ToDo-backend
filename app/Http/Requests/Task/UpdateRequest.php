@@ -14,7 +14,9 @@ class UpdateRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return true;
+        // Ensure the authenticated user owns the task being updated
+        $task = $this->route('task');
+        return $task && $this->user()?->id === $task->user_id;
     }
 
     /**

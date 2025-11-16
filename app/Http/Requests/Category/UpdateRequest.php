@@ -11,7 +11,8 @@ class UpdateRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return true;
+        // Only admins can update categories
+        return $this->user()?->hasRole('admin');
     }
 
     /**
