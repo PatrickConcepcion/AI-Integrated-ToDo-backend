@@ -296,7 +296,7 @@ class AuthController extends Controller
         }
 
         Log::warning('Password reset link sending returned non-success status', [
-            'email' => $email,
+            'email_hash' => hash('sha256', $email),
             'status' => $status,
         ]);
 

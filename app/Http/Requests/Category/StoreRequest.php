@@ -11,7 +11,8 @@ class StoreRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return true;
+        // Only admins can create categories
+        return $this->user()?->hasRole('admin');
     }
 
     /**
