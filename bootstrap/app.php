@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Arr;
 use Illuminate\Auth\AuthenticationException;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\UnauthorizedHttpException;
 use PHPOpenSourceSaver\JWTAuth\Exceptions\JWTException;
 
@@ -53,9 +54,17 @@ return Application::configure(basePath: dirname(__DIR__))
             if ($request->expectsJson()) {
                 // Determine status code based on exception type
                 $statusCode = 500; // default
+                $response = [
+                    'message' => $e->getMessage(),
+                ];
 
+                // Validation exceptions should return 422 with errors
+                if ($e instanceof ValidationException) {
+                    $statusCode = $e->status;
+                    $response['errors'] = $e->errors();
+                }
                 // Authentication-related exceptions should always return 401
-                if ($e instanceof AuthenticationException ||
+                elseif ($e instanceof AuthenticationException ||
                     $e instanceof UnauthorizedHttpException ||
                     $e instanceof JWTException) {
                     $statusCode = 401;
@@ -65,13 +74,13 @@ return Application::configure(basePath: dirname(__DIR__))
                     $statusCode = $e->getStatusCode();
                 }
 
-                return response()->json([
-                    'message' => $e->getMessage(),
-                    'exception' => get_class($e),
-                    'trace' => config('app.debug')
-                        ? collect($e->getTrace())->map(fn($t) => Arr::only($t, ['file', 'line', 'function', 'class']))->all()
-                        : null,
-                ], $statusCode);
+                // Add exception details only in debug mode (for development)
+                if (config('app.debug')) {
+                    $response['exception'] = get_class($e);
+                    $response['trace'] = collect($e->getTrace())->map(fn($t) => Arr::only($t, ['file', 'line', 'function', 'class']))->all();
+                }
+
+                return response()->json($response, $statusCode);
             }
         });
     })->create();
