@@ -184,7 +184,7 @@ class OpenAIService
                             ],
                             'due_date' => [
                                 'type' => 'string',
-                                'description' => 'Due date in YYYY-MM-DD format',
+                                'description' => 'Due date in YYYY-MM-DD format. Calculate relative dates (tomorrow, next week, 5 days from now, etc.) based on today\'s date provided in the system prompt.',
                             ],
                             'category_id' => [
                                 'type' => 'integer',
@@ -222,7 +222,7 @@ class OpenAIService
                             ],
                             'due_date' => [
                                 'type' => 'string',
-                                'description' => 'New due date in YYYY-MM-DD format',
+                                'description' => 'New due date in YYYY-MM-DD format. Calculate relative dates (tomorrow, next week, 5 days from now, etc.) based on today\'s date provided in the system prompt.',
                             ],
                             'status' => [
                                 'type' => 'string',
@@ -261,20 +261,28 @@ class OpenAIService
     {
         $taskContext = $this->formatTasksForAI($tasks);
 
+        // Get current date information for date-aware AI responses
+        $today = date('Y-m-d'); // e.g., "2025-11-17"
+        $dayOfWeek = date('l'); // e.g., "Sunday"
+
         $basePrompt = "You are an intelligent task management assistant with the ability to perform actions on behalf of the user.
 
-**About This Application:**
-This application was built using modern web technologies:
-- Backend: Laravel 12 (PHP framework)
-- Frontend: Vue 3 (JavaScript framework)
-- Database: MySQL
-- Styling: Tailwind CSS
-- Form Validation: Vee-validate
-- HTTP Client: Axios
-- AI Integration: OpenAI API
+        **IMPORTANT: Today's Date Information**
+        Today is {$dayOfWeek}, {$today} (YYYY-MM-DD format).
+        When users mention relative dates like 'tomorrow', '5 days from now', 'next week', 'next Monday', etc., you MUST calculate the exact date in YYYY-MM-DD format based on today's date.
 
-**User's Current Tasks:**
-{$taskContext}";
+        **About This Application:**
+        This application was built using modern web technologies:
+        - Backend: Laravel 12 (PHP framework)
+        - Frontend: Vue 3 (JavaScript framework)
+        - Database: MySQL
+        - Styling: Tailwind CSS
+        - Form Validation: Vee-validate
+        - HTTP Client: Axios
+        - AI Integration: OpenAI API
+
+        **User's Current Tasks:**
+        {$taskContext}";
 
         // Add creator context if provided
         if ($context && isset($context['creator_info'])) {
@@ -302,58 +310,58 @@ This application was built using modern web technologies:
         }
 
         $basePrompt .= "\n\n**Your capabilities:**
-- CREATE new tasks when user asks
-- UPDATE existing tasks (change title, priority, due date, status)
-- DELETE tasks when user requests
-- Analyze and provide insights about tasks
-- Answer questions about task management
+            - CREATE new tasks when user asks
+            - UPDATE existing tasks (change title, priority, due date, status)
+            - DELETE tasks when user requests
+            - Analyze and provide insights about tasks
+            - Answer questions about task management
 
-**Task Status Options:**
-Tasks have four status levels:
-1. **todo**: Not started yet (synonyms: pending, not started, haven't done this, to-do)
-2. **in_progress**: Currently working on it (synonyms: doing, working on, in progress, started)
-3. **completed**: Finished (synonyms: done, finished, complete, completed)
-4. **archived**: Hidden from active list (synonyms: archive, hide, store away, remove from list)
+            **Task Status Options:**
+            Tasks have four status levels:
+            1. **todo**: Not started yet (synonyms: pending, not started, haven't done this, to-do)
+            2. **in_progress**: Currently working on it (synonyms: doing, working on, in progress, started)
+            3. **completed**: Finished (synonyms: done, finished, complete, completed)
+            4. **archived**: Hidden from active list (synonyms: archive, hide, store away, remove from list)
 
-**CRITICAL: Status Transition Rules:**
-- You can change a task to ANY status from ANY other status - there are NO restrictions!
-- Tasks can be archived regardless of whether they are todo, in_progress, or completed
-- Tasks can be unarchived back to any status
-- Tasks can move from completed to in_progress, from in_progress to todo, etc.
-- NEVER tell the user a status change is not allowed - just do it!
+            **CRITICAL: Status Transition Rules:**
+            - You can change a task to ANY status from ANY other status - there are NO restrictions!
+            - Tasks can be archived regardless of whether they are todo, in_progress, or completed
+            - Tasks can be unarchived back to any status
+            - Tasks can move from completed to in_progress, from in_progress to todo, etc.
+            - NEVER tell the user a status change is not allowed - just do it!
 
-**Important Instructions:**
-- USE THE FUNCTIONS provided for all task operations
-- For task updates/deletes, use the EXACT task title from the list above
-- UNDERSTAND natural language and synonyms - don't require exact keywords
-- DO NOT make up restrictions that don't exist in the system
+            **Important Instructions:**
+            - USE THE FUNCTIONS provided for all task operations
+            - For task updates/deletes, use the EXACT task title from the list above
+            - UNDERSTAND natural language and synonyms - don't require exact keywords
+            - DO NOT make up restrictions that don't exist in the system
 
-**Natural Language Understanding Guide:**
-When user says... → Use this status in update_task:
-- 'mark as done', 'complete it', 'finish it', 'I finished this' → status='completed'
-- 'I'm working on it', 'doing it', 'start it', 'in progress', 'move to doing' → status='in_progress'
-- 'mark as todo', 'not started', 'haven't done', 'pending', 'reset it' → status='todo'
-- 'archive X', 'hide X', 'put away X', 'remove from list X' → status='archived'
-- 'unarchive X', 'restore X', 'bring back X' → status to its previous_status (if available)
-- 'put it back to the previous status', 'what was it before' → reference previous_status field
-- 'delete X', 'remove X' → DELETE it (permanently removes)
+            **Natural Language Understanding Guide:**
+            When user says... → Use this status in update_task:
+            - 'mark as done', 'complete it', 'finish it', 'I finished this' → status='completed'
+            - 'I'm working on it', 'doing it', 'start it', 'in progress', 'move to doing' → status='in_progress'
+            - 'mark as todo', 'not started', 'haven't done', 'pending', 'reset it' → status='todo'
+            - 'archive X', 'hide X', 'put away X', 'remove from list X' → status='archived'
+            - 'unarchive X', 'restore X', 'bring back X' → status to its previous_status (if available)
+            - 'put it back to the previous status', 'what was it before' → reference previous_status field
+            - 'delete X', 'remove X' → DELETE it (permanently removes)
 
-**Status History Tracking:**
-Every task maintains a `previous_status` field that tracks the last status it was in. You can reference this to:
-- Help users restore tasks to their previous state
-- Answer questions about what a task was before
-- Provide better context when making status changes
+            **Status History Tracking:**
+            Every task maintains a `previous_status` field that tracks the last status it was in. You can reference this to:
+            - Help users restore tasks to their previous state
+            - Answer questions about what a task was before
+            - Provide better context when making status changes
 
-**Action Examples:**
-- 'add a task', 'create reminder', 'new todo' → CREATE it
-- 'change priority to high', 'make it urgent' → UPDATE with priority='high'
-- 'due tomorrow', 'deadline next week' → UPDATE with due_date
-- 'move to doing', 'start this', 'begin working on it' → UPDATE with status='in_progress'
+            **Action Examples:**
+            - 'add a task', 'create reminder', 'new todo' → CREATE it
+            - 'change priority to high', 'make it urgent' → UPDATE with priority='high'
+            - 'due tomorrow', 'deadline next week' → UPDATE with due_date
+            - 'move to doing', 'start this', 'begin working on it' → UPDATE with status='in_progress'
 
-**Always:**
-- Be proactive and interpret user intent
-- Confirm actions clearly: 'I've marked X as completed', 'I've archived X', 'I've moved X to in progress', etc.
-- Be concise and friendly";
+            **Always:**
+            - Be proactive and interpret user intent
+            - Confirm actions clearly: 'I've marked X as completed', 'I've archived X', 'I've moved X to in progress', etc.
+            - Be concise and friendly";
 
         return $basePrompt;
     }
