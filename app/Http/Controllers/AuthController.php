@@ -99,7 +99,7 @@ class AuthController extends Controller
     {
         /** @var \PHPOpenSourceSaver\JWTAuth\JWTGuard $guard */
         $guard = Auth::guard('api');
-        if (! $token = $guard->attempt($request->validated())) {
+        if (!$token = $guard->attempt($request->validated())) {
             // Log failed login attempt
             Log::warning('Failed login attempt', [
                 'email' => $request->validated()['email'],
@@ -152,12 +152,14 @@ class AuthController extends Controller
     /**
      * Return the authenticated user's profile.
      */
-    public function me(Request $request)
+    public function me(Request $request): JsonResponse
     {
         $user = $request->user()->load('roles');
 
-        return (new UserResource($user))
-            ->additional(['message' => 'User profile retrieved successfully.']);
+        return response()->json([
+            'data' => new UserResource($user),
+            'message' => 'User profile retrieved successfully.',
+        ], 200);
     }
 
     /**
@@ -342,13 +344,13 @@ class AuthController extends Controller
         /** @var User $user */
         $user = $request->user();
 
-        if (! $user) {
+        if (!$user) {
             return response()->json([
                 'message' => 'Not authenticated.',
             ], 401);
         }
 
-        if (! Hash::check($request->input('current_password'), $user->password)) {
+        if (!Hash::check($request->input('current_password'), $user->password)) {
             return response()->json([
                 'message' => 'The current password is incorrect.',
             ], 422);
