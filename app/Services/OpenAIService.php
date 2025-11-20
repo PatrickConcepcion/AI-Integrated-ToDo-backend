@@ -4,6 +4,7 @@ namespace App\Services;
 
 use OpenAI;
 use Illuminate\Support\Collection;
+use Carbon\Carbon;
 
 class OpenAIService
 {
@@ -184,7 +185,7 @@ class OpenAIService
                             ],
                             'due_date' => [
                                 'type' => 'string',
-                                'description' => 'Due date in YYYY-MM-DD format',
+                                'description' => 'Due date in YYYY-MM-DD format. Calculate relative dates (tomorrow, next week, 5 days from now, etc.) based on today\'s date provided in the system prompt.',
                             ],
                             'category_id' => [
                                 'type' => 'integer',
@@ -222,7 +223,7 @@ class OpenAIService
                             ],
                             'due_date' => [
                                 'type' => 'string',
-                                'description' => 'New due date in YYYY-MM-DD format',
+                                'description' => 'New due date in YYYY-MM-DD format. Calculate relative dates (tomorrow, next week, 5 days from now, etc.) based on today\'s date provided in the system prompt.',
                             ],
                             'status' => [
                                 'type' => 'string',
@@ -261,7 +262,16 @@ class OpenAIService
     {
         $taskContext = $this->formatTasksForAI($tasks);
 
-        $basePrompt = "You are an intelligent task management assistant with the ability to perform actions on behalf of the user.
+        // Get current date information for date-aware AI responses
+        $today = Carbon::now(); // e.g., "2025-11-17"
+        $dayOfWeek = $today->format('l'); // e.g., "Sunday"
+
+        $basePrompt = <<<EOT
+You are an intelligent task management assistant with the ability to perform actions on behalf of the user.
+
+**IMPORTANT: Today's Date Information**
+Today is {$dayOfWeek}, {$today} (YYYY-MM-DD format).
+When users mention relative dates like 'tomorrow', '5 days from now', 'next week', 'next Monday', etc., you MUST calculate the exact date in YYYY-MM-DD format based on today's date.
 
 **About This Application:**
 This application was built using modern web technologies:
@@ -274,7 +284,8 @@ This application was built using modern web technologies:
 - AI Integration: OpenAI API
 
 **User's Current Tasks:**
-{$taskContext}";
+{$taskContext}
+EOT;
 
         // Add creator context if provided
         if ($context && isset($context['creator_info'])) {
@@ -301,7 +312,10 @@ This application was built using modern web technologies:
             $basePrompt .= "   - 'You can connect with him here: [link]'\n";
         }
 
-        $basePrompt .= "\n\n**Your capabilities:**
+        $basePrompt .= <<<EOT
+
+
+**Your capabilities:**
 - CREATE new tasks when user asks
 - UPDATE existing tasks (change title, priority, due date, status)
 - DELETE tasks when user requests
@@ -353,7 +367,8 @@ Every task maintains a `previous_status` field that tracks the last status it wa
 **Always:**
 - Be proactive and interpret user intent
 - Confirm actions clearly: 'I've marked X as completed', 'I've archived X', 'I've moved X to in progress', etc.
-- Be concise and friendly";
+- Be concise and friendly
+EOT;
 
         return $basePrompt;
     }
@@ -376,13 +391,13 @@ Every task maintains a `previous_status` field that tracks the last status it wa
             $priorityValue = $task->priority instanceof \App\Enums\PriorityEnum ? $task->priority->value : ($task->priority ?? 'medium');
 
             // Display status with icons
-            $statusIcon = match($statusValue) {
+            $statusIcon = match ($statusValue) {
                 'completed' => '✓',
                 'in_progress' => '▶',
                 'todo' => '○',
                 default => '○'
             };
-            $statusText = match($statusValue) {
+            $statusText = match ($statusValue) {
                 'completed' => 'Completed',
                 'in_progress' => 'In Progress',
                 'todo' => 'To-Do',
