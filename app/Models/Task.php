@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\StatusEnum;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -28,11 +29,6 @@ class Task extends Model
         'notes',
     ];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
     /**
      * The attributes that should be cast.
      *
@@ -69,7 +65,7 @@ class Task extends Model
      */
     public function scopeActive(Builder $query)
     {
-        return $query->where('status', '!=', 'archived');
+        return $query->where('status', '!=', StatusEnum::Archived->value);
     }
 
     /**
@@ -77,6 +73,22 @@ class Task extends Model
      */
     public function scopeArchived(Builder $query)
     {
-        return $query->where('status', 'archived');
+        return $query->where('status', StatusEnum::Archived->value);
+    }
+
+    /**
+     * Apply a status transition while keeping previous_status in sync.
+     */
+    public function transitionToStatus(StatusEnum $newStatus): void
+    {
+        $currentStatus = $this->status instanceof StatusEnum
+            ? $this->status
+            : ($this->status !== null ? StatusEnum::from($this->status) : null);
+
+        if ($currentStatus !== null && $currentStatus !== $newStatus) {
+            $this->previous_status = $currentStatus;
+        }
+
+        $this->status = $newStatus;
     }
 }

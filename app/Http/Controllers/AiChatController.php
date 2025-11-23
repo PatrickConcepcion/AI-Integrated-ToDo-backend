@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\AiChatRequest;
 use App\Services\OpenAIService;
 use App\Models\Task;
+use App\Enums\StatusEnum;
 use App\Models\Conversation;
 use App\Models\Message;
 use Illuminate\Http\JsonResponse;
@@ -29,7 +30,7 @@ class AiChatController extends Controller
             // 1. Get authenticated user's tasks
             $tasks = Task::where('user_id', Auth::id())
                 ->with('category')
-                ->where('status', '!=', 'archived')
+                ->where('status', '!=', StatusEnum::Archived->value)
                 ->orderBy('due_date', 'asc')
                 ->orderBy('priority', 'desc')
                 ->get();
@@ -89,7 +90,7 @@ class AiChatController extends Controller
                 // Refresh tasks after actions
                 $tasks = Task::where('user_id', Auth::id())
                     ->with('category')
-                    ->where('status', '!=', 'archived')
+                    ->where('status', '!=', StatusEnum::Archived->value)
                     ->orderBy('due_date', 'asc')
                     ->orderBy('priority', 'desc')
                     ->get();
@@ -284,22 +285,23 @@ class AiChatController extends Controller
             $updated[] = 'due date';
         }
         if (isset($args['status'])) {
-            $newStatus = $args['status'];
-
-            // Keep track of previous status for history and potential restore operations
-            $task->previous_status = $task->status;
-            $task->status = $newStatus;
-
-            // Update message based on status change
-            if ($newStatus === 'archived') {
-                $updated[] = 'archived';
-            } else if ($newStatus === 'completed') {
-                $updated[] = 'marked as completed';
-            } else if ($newStatus === 'in_progress') {
-                $updated[] = 'status changed to in progress';
-            } else if ($newStatus === 'todo') {
-                $updated[] = 'status changed to to-do';
+            try {
+                $newStatus = StatusEnum::from($args['status']);
+            } catch (\ValueError $e) {
+                return [
+                    'success' => false,
+                    'message' => "❌ Invalid status value: \"{$args['status']}\"",
+                ];
             }
+
+            $task->transitionToStatus($newStatus);
+
+            $updated[] = match ($newStatus) {
+                StatusEnum::Archived => 'archived',
+                StatusEnum::Completed => 'marked as completed',
+                StatusEnum::InProgress => 'status changed to in progress',
+                StatusEnum::Todo => 'status changed to to-do',
+            };
         }
 
         $task->save();

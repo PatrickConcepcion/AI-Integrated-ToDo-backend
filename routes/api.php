@@ -34,12 +34,6 @@ Route::middleware('auth:api')->group(function () {
     // Specific task routes MUST come before apiResource to avoid conflicts
     Route::prefix('tasks')->group(function () {
         Route::get('archived', [TaskController::class, 'archived']);
-        
-        Route::prefix('{task}')->group(function () {
-            Route::post('complete', [TaskController::class, 'toggleComplete']);
-            Route::post('archive', [TaskController::class, 'archive']);
-            Route::post('unarchive', [TaskController::class, 'unarchive']);
-        });
     });
 
     Route::apiResource('tasks', TaskController::class);

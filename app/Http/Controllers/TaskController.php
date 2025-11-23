@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Task;
+use App\Enums\StatusEnum;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -53,7 +54,7 @@ class TaskController extends Controller
     /**
      * Display a listing of archived tasks.
      */
-    public function archived(Request $request): JsonResponse
+    public function archived(): JsonResponse
     {
         $tasks = Task::where('user_id', Auth::id())
             ->archived()
@@ -107,7 +108,17 @@ class TaskController extends Controller
         $this->authorize('update', $task);
 
         $validated = $request->validated();
-        $task->update($validated);
+
+        if (array_key_exists('status', $validated)) {
+            $newStatus = StatusEnum::from($validated['status']);
+
+            // Preserve the previous status when archiving; clear when leaving archive
+            $task->transitionToStatus($newStatus);
+            unset($validated['status']);
+        }
+
+        $task->fill($validated);
+        $task->save();
         $task->load('category');
 
         return response()->json([
@@ -128,79 +139,6 @@ class TaskController extends Controller
 
         return response()->json([
             'message' => 'Task deleted successfully.'
-        ]);
-    }
-
-    /**
-     * Toggle task completion status.
-     */
-    public function toggleComplete(Request $request, Task $task): JsonResponse
-    {
-        $this->authorize('update', $task);
-
-        $isCompleting = $task->status !== 'completed';
-
-        // Track previous status for history
-        $task->previous_status = $task->status;
-        $task->status = $isCompleting ? 'completed' : 'todo';
-        $task->save();
-        $message = $isCompleting ? 'Task marked as completed.' : 'Task marked as incomplete.';
-
-        $task->load('category');
-
-        return response()->json([
-            'data' => $task,
-            'message' => $message
-        ]);
-    }
-
-    /**
-     * Archive the specified task.
-     */
-    public function archive(Request $request, Task $task): JsonResponse
-    {
-        $this->authorize('update', $task);
-
-        if ($task->status === 'archived') {
-            return response()->json([
-                'message' => 'Task is already archived.'
-            ], 400);
-        }
-
-        // Store current status before archiving for potential restore
-        $task->previous_status = $task->status;
-        $task->status = 'archived';
-        $task->save();
-        $task->load('category');
-
-        return response()->json([
-            'data' => $task,
-            'message' => 'Task archived successfully.'
-        ]);
-    }
-
-    /**
-     * Unarchive the specified task.
-     */
-    public function unarchive(Request $request, Task $task): JsonResponse
-    {
-        $this->authorize('update', $task);
-
-        if ($task->status !== 'archived') {
-            return response()->json([
-                'message' => 'Task is not archived.'
-            ], 400);
-        }
-
-        // Restore previous status or default to 'todo'
-        $task->status = $task->previous_status ?? 'todo';
-        $task->previous_status = null;
-        $task->save();
-        $task->load('category');
-
-        return response()->json([
-            'data' => $task,
-            'message' => 'Task unarchived successfully.'
         ]);
     }
 }
