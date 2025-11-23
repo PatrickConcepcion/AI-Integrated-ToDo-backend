@@ -125,7 +125,9 @@ class TaskTest extends TestCase
             'status' => StatusEnum::Todo->value,
         ]);
 
-        $response = $this->auth($token)->postJson("/api/tasks/{$task->id}/complete");
+        $response = $this->auth($token)->putJson("/api/tasks/{$task->id}", [
+            'status' => StatusEnum::Completed->value,
+        ]);
 
         $response->assertStatus(200)
             ->assertJson([
@@ -184,7 +186,9 @@ class TaskTest extends TestCase
             'status' => StatusEnum::Todo->value,
         ]);
 
-        $response = $this->auth($token)->postJson("/api/tasks/{$task->id}/complete");
+        $response = $this->auth($token)->putJson("/api/tasks/{$task->id}", [
+            'status' => StatusEnum::Completed->value,
+        ]);
 
         $response->assertStatus(403);
     }
