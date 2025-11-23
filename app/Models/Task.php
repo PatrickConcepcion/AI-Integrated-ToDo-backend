@@ -85,12 +85,8 @@ class Task extends Model
             ? $this->status
             : ($this->status !== null ? StatusEnum::from($this->status) : null);
 
-        if ($newStatus === StatusEnum::Archived && $currentStatus !== StatusEnum::Archived && $currentStatus !== null) {
+        if ($currentStatus !== null && $currentStatus !== $newStatus) {
             $this->previous_status = $currentStatus;
-        }
-
-        if ($currentStatus === StatusEnum::Archived && $newStatus !== StatusEnum::Archived && $currentStatus !== null) {
-            $this->previous_status = null;
         }
 
         $this->status = $newStatus;
