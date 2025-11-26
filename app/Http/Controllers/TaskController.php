@@ -19,7 +19,7 @@ class TaskController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Task::where('user_id', Auth::id())
+        $tasks = Task::where('user_id', Auth::id())
             ->active() // Only non-archived tasks
             ->with('category')
             ->when($request->has('category_id') && $request->category_id !== null, function ($q) use ($request) {
@@ -36,14 +36,8 @@ class TaskController extends Controller
             })
             ->when($request->has('overdue') && $request->overdue === 'true', function ($q) {
                 return $q->where('due_date', '<', Carbon::now())->where('status', '!=', 'completed');
-            });
-
-        // Sort by due date or created date
-        $sortBy = $request->get('sort_by', 'created_at');
-        $sortOrder = $request->get('sort_order', 'desc');
-        $query->orderBy($sortBy, $sortOrder);
-
-        $tasks = $query->get();
+            })
+            ->get();
 
         return response()->json([
             'data' => $tasks,
@@ -73,9 +67,7 @@ class TaskController extends Controller
      */
     public function store(StoreRequest $request): JsonResponse
     {
-        $validated = $request->validated();
-
-        $task = Task::create(array_merge($validated, ['user_id' => Auth::id()]));
+        $task = Task::create(array_merge($request->validated(), ['user_id' => Auth::id()]));
 
         $task->load('category');
 
@@ -117,8 +109,7 @@ class TaskController extends Controller
             unset($validated['status']);
         }
 
-        $task->fill($validated);
-        $task->save();
+        $task->update($validated);
         $task->load('category');
 
         return response()->json([
@@ -134,7 +125,6 @@ class TaskController extends Controller
     {
         $this->authorize('delete', $task);
 
-        $taskId = $task->id;
         $task->delete();
 
         return response()->json([

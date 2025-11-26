@@ -39,9 +39,7 @@ class CategoryController extends Controller
     {
         $this->authorize('create', Category::class);
 
-        $validated = $request->validated();
-
-        $category = Category::create($validated);
+        $category = Category::create($request->validated());
 
         return response()->json([
             'data' => $category,
@@ -56,7 +54,6 @@ class CategoryController extends Controller
     {
         $user = Auth::user();
 
-        // Load only the user's tasks for this category
         $category->loadCount([
             'tasks' => function ($query) use ($user) {
                 $query->where('user_id', $user->id);
@@ -76,9 +73,7 @@ class CategoryController extends Controller
     {
         $this->authorize('update', $category);
 
-        $validated = $request->validated();
-
-        $category->update($validated);
+        $category->update($request->validated());
 
         return response()->json([
             'data' => $category,
