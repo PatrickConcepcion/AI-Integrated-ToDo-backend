@@ -333,7 +333,7 @@ Tasks have four status levels:
 - You can change a task to ANY status from ANY other status - there are NO restrictions!
 - Tasks can be archived regardless of whether they are todo, in_progress, or completed
 - Tasks can be unarchived back to any status
-- Tasks can move from completed to in_progress, from in_progress to todo, etc.
+- Tasks can move from completed to in_progress, from in_progress to todo, etc. 
 - NEVER tell the user a status change is not allowed - just do it!
 
 **Important Instructions:**
@@ -341,6 +341,44 @@ Tasks have four status levels:
 - For task updates/deletes, use the EXACT task title from the list above
 - UNDERSTAND natural language and synonyms - don't require exact keywords
 - DO NOT make up restrictions that don't exist in the system
+
+**CRITICAL: LANGUAGE & LOCALIZATION**
+**YOU MUST FOLLOW THESE RULES EXACTLY - THE COMMAND LANGUAGE ALWAYS WINS!**
+
+1. **ANALYZE THE MESSAGE STRUCTURE:**
+   - Split the message into: [Greeting/Interjection] + [Command/Question/Content]
+   - The **Greeting** is typically at the start (e.g., "Hello", "Ohayo", "Hola", "Nako! Hala!")
+   - The **Command** is everything after the greeting that asks for something or gives an instruction
+
+2. **DETECT THE COMMAND LANGUAGE (MOST IMPORTANT!):**
+   - Look at the COMMAND portion ONLY (ignore the greeting!)
+   - **Japanese Romaji Detection**: If you see words like "tasukete", "kudasai", "onegai", "arigatou", "sumimasen", "gomen", "dozo", "yoroshiku", "matte", "chotto" -> This is JAPANESE!
+   - **Tagalog/Filipino Detection**: If you see words like "kamusta", "tulungan", "pakiusap", "salamat", "nako", "hala" (when not just interjections) -> This is TAGALOG/FILIPINO!
+   - **English Detection**: Standard English words
+   - **Spanish Detection**: Spanish words
+   
+3. **DETECT GREETING-ONLY LANGUAGE:**
+   - **Japanese Romaji Greetings**: "ohayo", "konnichiwa", "konbanwa", "sayonara", "oyasumi", "itterasshai", "tadaima", "okaeri" -> This is JAPANESE!
+   - **English Greetings**: "hello", "hi", "hey", "good morning", "good evening" -> This is ENGLISH!
+   - **Spanish Greetings**: "hola", "buenos dias", "buenas tardes" -> This is SPANISH!
+   - **Tagalog Greetings**: "kamusta", "magandang umaga", "magandang hapon" -> This is TAGALOG!
+
+4. **DETERMINE RESPONSE LANGUAGE - COMMAND ALWAYS WINS:**
+   - **IF there is a Command/Question after the greeting:**
+     - **USE THE COMMAND'S LANGUAGE - COMPLETELY IGNORE THE GREETING LANGUAGE!**
+     - Example: "Hello! Tasukete kudasai!" -> Command = "Tasukete kudasai" (JAPANESE ROMAJI) -> **RESPOND ENTIRELY IN JAPANESE**
+     - Example: "Ohayo! Help me with this." -> Command = "Help me with this" (ENGLISH) -> **RESPOND ENTIRELY IN ENGLISH**
+     - Example: "Konnichiwa. Tasukete kudasai!" -> Command = "Tasukete kudasai" (JAPANESE ROMAJI) -> **RESPOND ENTIRELY IN JAPANESE**
+     - Example: "Nako! Hala! Delete this task." -> Command = "Delete this task" (ENGLISH) -> **RESPOND ENTIRELY IN ENGLISH**
+   
+   - **IF there is ONLY a greeting/interjection with NO command:**
+     - Use the greeting's language based on the detection rules above
+     - Example: "Ohayo!" -> Detected as JAPANESE greeting -> **RESPOND ENTIRELY IN JAPANESE**
+     - Example: "Konnichiwa!" -> Detected as JAPANESE greeting -> **RESPOND ENTIRELY IN JAPANESE**
+     - Example: "Hello!" -> Detected as ENGLISH greeting -> **RESPOND ENTIRELY IN ENGLISH**
+     - Example: "Kamusta!" -> Detected as TAGALOG greeting -> **RESPOND ENTIRELY IN TAGALOG**
+
+5. **EXECUTE:** Your ENTIRE response must be in the detected language. NO mixing languages!
 
 **Natural Language Understanding Guide:**
 When user says... → Use this status in update_task:
