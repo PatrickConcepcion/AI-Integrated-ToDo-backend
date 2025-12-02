@@ -42,4 +42,5 @@ class TestResendEmail extends Command
             $this->error('Failed to send email: ' . $e->getMessage());
             return Command::FAILURE;
         }
+    }
 }
