@@ -38,7 +38,7 @@ class TestResendEmail extends Command
 
             $this->info('Test email sent successfully!');
             return Command::SUCCESS;
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->error('Failed to send email: ' . $e->getMessage());
             return Command::FAILURE;
         }
