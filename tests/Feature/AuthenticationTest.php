@@ -3,7 +3,12 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use App\Notifications\ResetPasswordNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Str;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
@@ -128,5 +133,58 @@ class AuthenticationTest extends TestCase
                     'roles' => ['admin'],
                 ],
             ]);
+    }
+
+    public function test_user_can_request_password_reset(): void
+    {
+        Notification::fake();
+        
+        $user = User::factory()->create([
+            'email' => 'test@example.com',
+        ]);
+
+        $response = $this->postJson('/api/auth/forgot-password', [
+            'email' => 'test@example.com',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'message' => 'If an account exists for that email, a password reset link has been sent.',
+            ]);
+        
+        Notification::assertSentTo($user, ResetPasswordNotification::class);
+    }
+
+    public function test_user_can_reset_password(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'test@example.com',
+            'password' => bcrypt('oldpassword'),
+        ]);
+
+        // Create a password reset token manually for testing
+        $token = Str::random(64);
+        DB::table('password_reset_tokens')->insert([
+            'email' => 'test@example.com',
+            'token' => Hash::make($token),
+            'created_at' => now(),
+        ]);
+
+        // Reset the password
+        $response = $this->postJson('/api/auth/reset-password', [
+            'email' => 'test@example.com',
+            'token' => $token,
+            'password' => 'newpassword',
+            'password_confirmation' => 'newpassword',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'message' => 'Password reset successfully.',
+            ]);
+
+        // Verify the password was changed
+        $user->refresh();
+        $this->assertTrue(Hash::check('newpassword', $user->password));
     }
 }
