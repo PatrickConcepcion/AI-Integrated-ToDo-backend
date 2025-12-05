@@ -91,33 +91,35 @@ class AiChatController extends Controller
                 );
 
                 foreach ($stream as $response) {
-                    $delta = $response->choices[0]->delta;
+                    if (isset($response->choices[0]->delta)) {
+                        $delta = $response->choices[0]->delta;
 
-                    // Handle Tool Calls
-                    if ($delta->toolCalls) {
-                        foreach ($delta->toolCalls as $toolCallChunk) {
-                            $index = $toolCallChunk->index;
-                            
-                            if (!isset($toolCalls[$index])) {
-                                $toolCalls[$index] = [
-                                    'id' => $toolCallChunk->id ?? '',
-                                    'name' => $toolCallChunk->function->name ?? '',
-                                    'arguments' => '',
-                                ];
-                            }
-                            
-                            if (isset($toolCallChunk->function->arguments)) {
-                                $toolCalls[$index]['arguments'] .= $toolCallChunk->function->arguments;
+                        // Handle Tool Calls
+                        if (isset($delta->toolCalls)) {
+                            foreach ($delta->toolCalls as $toolCallChunk) {
+                                $index = $toolCallChunk->index;
+
+                                if (!isset($toolCalls[$index])) {
+                                    $toolCalls[$index] = [
+                                        'id' => $toolCallChunk->id ?? '',
+                                        'name' => $toolCallChunk->function->name ?? '',
+                                        'arguments' => '',
+                                    ];
+                                }
+
+                                if (isset($toolCallChunk->function->arguments)) {
+                                    $toolCalls[$index]['arguments'] .= $toolCallChunk->function->arguments;
+                                }
                             }
                         }
-                    }
 
-                    // Handle Content
-                    if ($delta->content) {
-                        $fullResponse .= $delta->content;
-                        echo "data: " . json_encode(['chunk' => $delta->content]) . "\n\n";
-                        ob_flush();
-                        flush();
+                        // Handle Content
+                        if (isset($delta->content)) {
+                            $fullResponse .= $delta->content;
+                            echo "data: " . json_encode(['chunk' => $delta->content]) . "\n\n";
+                            ob_flush();
+                            flush();
+                        }
                     }
                 }
 
@@ -163,13 +165,15 @@ class AiChatController extends Controller
                     );
 
                     foreach ($followUpStream as $response) {
-                        $delta = $response->choices[0]->delta;
-                        
-                        if ($delta->content) {
-                            $fullResponse .= $delta->content;
-                            echo "data: " . json_encode(['chunk' => $delta->content]) . "\n\n";
-                            ob_flush();
-                            flush();
+                        if (isset($response->choices[0]->delta)) {
+                            $delta = $response->choices[0]->delta;
+
+                            if (isset($delta->content)) {
+                                $fullResponse .= $delta->content;
+                                echo "data: " . json_encode(['chunk' => $delta->content]) . "\n\n";
+                                ob_flush();
+                                flush();
+                            }
                         }
                     }
 
@@ -200,9 +204,11 @@ class AiChatController extends Controller
             } catch (\Exception $e) {
                 Log::error('Streaming Error', [
                     'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
                     'user_id' => $userId
                 ]);
-                echo "data: " . json_encode(['error' => $e->getMessage()]) . "\n\n";
+                echo "data: " . json_encode(['error' => 'Something went wrong. Please try again later.']) . "\n\n";
+                echo "data: [DONE]\n\n";
                 ob_flush();
                 flush();
             }
@@ -226,7 +232,17 @@ class AiChatController extends Controller
 
         foreach ($functionCalls as $call) {
             $functionName = $call['name'];
-            $arguments = $call['arguments'];
+            // Decode JSON arguments from streaming accumulation
+            $arguments = json_decode($call['arguments'], true);
+
+            // Validate that arguments were properly decoded
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                Log::error('Failed to decode tool call arguments', [
+                    'arguments' => $call['arguments'],
+                    'json_error' => json_last_error_msg()
+                ]);
+                continue;
+            }
 
             try {
                 switch ($functionName) {

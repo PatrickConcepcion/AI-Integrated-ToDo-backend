@@ -189,15 +189,44 @@ class OpenAIService
             ];
 
             foreach ($toolResults as $result) {
-                // Validate and serialize result (same logic as chat method)
-                if (!is_array($result) || !isset($result['tool_call_id']) || !isset($result['result'])) {
+                // Validate tool result structure
+                if (!is_array($result)) {
+                    Log::warning('Invalid tool result format: not an array', ['result' => $result]);
                     continue;
                 }
-                
+
+                if (!isset($result['tool_call_id']) || !isset($result['result'])) {
+                    Log::warning('Invalid tool result format: missing required keys', [
+                        'has_tool_call_id' => isset($result['tool_call_id']),
+                        'has_result' => isset($result['result']),
+                        'result' => $result
+                    ]);
+                    continue;
+                }
+
+                if (empty($result['tool_call_id'])) {
+                    Log::warning('Invalid tool result: empty tool_call_id', ['result' => $result]);
+                    continue;
+                }
+
+                // Ensure result is serializable
+                try {
+                    $serializedResult = json_encode($result['result']);
+                    if ($serializedResult === false) {
+                        throw new \JsonException('Failed to serialize result');
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Failed to serialize tool result', [
+                        'error' => $e->getMessage(),
+                        'result' => $result['result']
+                    ]);
+                    continue;
+                }
+
                 $messages[] = [
                     'role' => 'tool',
                     'tool_call_id' => $result['tool_call_id'],
-                    'content' => json_encode($result['result']),
+                    'content' => $serializedResult,
                 ];
             }
         }
