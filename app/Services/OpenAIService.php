@@ -4,6 +4,7 @@ namespace App\Services;
 
 use OpenAI;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
 class OpenAIService
@@ -59,12 +60,12 @@ class OpenAIService
             foreach ($toolResults as $result) {
                 // Validate tool result structure
                 if (!is_array($result)) {
-                    \Log::warning('Invalid tool result format: not an array', ['result' => $result]);
+                    Log::warning('Invalid tool result format: not an array', ['result' => $result]);
                     continue;
                 }
 
                 if (!isset($result['tool_call_id']) || !isset($result['result'])) {
-                    \Log::warning('Invalid tool result format: missing required keys', [
+                    Log::warning('Invalid tool result format: missing required keys', [
                         'has_tool_call_id' => isset($result['tool_call_id']),
                         'has_result' => isset($result['result']),
                         'result' => $result
@@ -73,7 +74,7 @@ class OpenAIService
                 }
 
                 if (empty($result['tool_call_id'])) {
-                    \Log::warning('Invalid tool result: empty tool_call_id', ['result' => $result]);
+                    Log::warning('Invalid tool result: empty tool_call_id', ['result' => $result]);
                     continue;
                 }
 
@@ -84,7 +85,7 @@ class OpenAIService
                         throw new \JsonException('Failed to serialize result');
                     }
                 } catch (\Exception $e) {
-                    \Log::error('Failed to serialize tool result', [
+                    Log::error('Failed to serialize tool result', [
                         'error' => $e->getMessage(),
                         'result' => $result['result']
                     ]);
@@ -123,7 +124,7 @@ class OpenAIService
         $message = $response->choices[0]->message;
 
         // Debug logging
-        \Log::info('OpenAI Response', [
+        Log::info('OpenAI Response', [
             'message' => $message,
             'content' => $message->content ?? null,
             'toolCalls' => $message->toolCalls ?? null,
@@ -152,6 +153,103 @@ class OpenAIService
             'response' => $message->content ?? '',
             'function_calls' => null,
         ];
+    }
+
+    /**
+     * Send chat request to OpenAI with streaming support
+     */
+    public function chatStream(string $userMessage, Collection $tasks, array $messageHistory = [], ?array $toolCalls = null, ?array $toolResults = null, ?array $context = null)
+    {
+        $systemPrompt = $this->buildSystemPrompt($tasks, $context);
+
+        $messages = [
+            [
+                'role' => 'system',
+                'content' => $systemPrompt,
+            ],
+        ];
+
+        // Add message history
+        if (!empty($messageHistory)) {
+            $messages = array_merge($messages, $messageHistory);
+        }
+
+        // Add current user message
+        $messages[] = [
+            'role' => 'user',
+            'content' => $userMessage,
+        ];
+
+        // Add tool results if they exist
+        if ($toolCalls && $toolResults) {
+            $messages[] = [
+                'role' => 'assistant',
+                'content' => null,
+                'tool_calls' => $toolCalls,
+            ];
+
+            foreach ($toolResults as $result) {
+                // Validate tool result structure
+                if (!is_array($result)) {
+                    Log::warning('Invalid tool result format: not an array', ['result' => $result]);
+                    continue;
+                }
+
+                if (!isset($result['tool_call_id']) || !isset($result['result'])) {
+                    Log::warning('Invalid tool result format: missing required keys', [
+                        'has_tool_call_id' => isset($result['tool_call_id']),
+                        'has_result' => isset($result['result']),
+                        'result' => $result
+                    ]);
+                    continue;
+                }
+
+                if (empty($result['tool_call_id'])) {
+                    Log::warning('Invalid tool result: empty tool_call_id', ['result' => $result]);
+                    continue;
+                }
+
+                // Ensure result is serializable
+                try {
+                    $serializedResult = json_encode($result['result']);
+                    if ($serializedResult === false) {
+                        throw new \JsonException('Failed to serialize result');
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Failed to serialize tool result', [
+                        'error' => $e->getMessage(),
+                        'result' => $result['result']
+                    ]);
+                    continue;
+                }
+
+                $messages[] = [
+                    'role' => 'tool',
+                    'tool_call_id' => $result['tool_call_id'],
+                    'content' => $serializedResult,
+                ];
+            }
+        }
+
+        $requestParams = [
+            'model' => config('openai.model'),
+            'max_completion_tokens' => config('openai.max_tokens'),
+            'messages' => $messages,
+        ];
+
+        // Configure tools
+        $modelSupportsTools = !str_contains(config('openai.model'), 'nano');
+
+        if ($modelSupportsTools && !$toolResults) {
+            $requestParams['tools'] = $this->getToolDefinitions();
+            $requestParams['tool_choice'] = 'auto';
+        } elseif ($modelSupportsTools && $toolResults) {
+            // Force text response after tool execution
+            $requestParams['tools'] = $this->getToolDefinitions();
+            $requestParams['tool_choice'] = 'none';
+        }
+
+        return $this->client->chat()->createStreamed($requestParams);
     }
 
     /**

@@ -22,151 +22,202 @@ class AiChatController extends Controller
     }
 
     /**
-     * Handle AI chat request with function calling support
+     * Handle AI chat request with function calling support and streaming
      */
-    public function chat(AiChatRequest $request): JsonResponse
+    public function chat(AiChatRequest $request): \Symfony\Component\HttpFoundation\StreamedResponse
     {
-        try {
-            // 1. Get authenticated user's tasks
-            $tasks = Task::where('user_id', Auth::id())
-                ->with('category')
-                ->where('status', '!=', StatusEnum::Archived->value)
-                ->orderBy('due_date', 'asc')
-                ->orderBy('priority', 'desc')
-                ->get();
+        // 1. Get authenticated user's tasks (Pre-fetch outside stream)
+        $tasks = Task::where('user_id', Auth::id())
+            ->with('category')
+            ->where('status', '!=', StatusEnum::Archived->value)
+            ->orderBy('due_date', 'asc')
+            ->orderBy('priority', 'desc')
+            ->get();
 
-            // 2. Find or create user's conversation
-            $conversation = Conversation::firstOrCreate(['user_id' => Auth::id()]);
+        // 2. Find or create user's conversation
+        $conversation = Conversation::firstOrCreate(['user_id' => Auth::id()]);
 
-            // 3. Store user's message
-            Message::create([
-                'conversation_id' => $conversation->id,
-                'content' => $request->validated()['message'],
-                'is_ai_response' => false,
-            ]);
+        // 3. Store user's message
+        Message::create([
+            'conversation_id' => $conversation->id,
+            'content' => $request->validated()['message'],
+            'is_ai_response' => false,
+        ]);
 
-            // 4. Get last 10 messages for context (increased for better conversation memory)
-            $recentMessages = Message::where('conversation_id', $conversation->id)
-                ->orderBy('created_at', 'desc')
-                ->limit(10)
-                ->get()
-                ->reverse()
-                ->values();
+        // 4. Get last 10 messages for context
+        $recentMessages = Message::where('conversation_id', $conversation->id)
+            ->orderBy('created_at', 'desc')
+            ->limit(10)
+            ->get()
+            ->reverse()
+            ->values();
 
-            // 5. Format message history for OpenAI
-            $messageHistory = $recentMessages->map(function ($msg) {
-                return [
-                    'role' => $msg->is_ai_response ? 'assistant' : 'user',
-                    'content' => $msg->content,
-                ];
-            })->toArray();
+        // 5. Format message history
+        $messageHistory = $recentMessages->map(function ($msg) {
+            return [
+                'role' => $msg->is_ai_response ? 'assistant' : 'user',
+                'content' => $msg->content,
+            ];
+        })->toArray();
 
-            // 6. Check if user is asking about creator or LinkedIn
-            $context = null;
-            if ($this->isAskingAboutCreator($request->validated()['message']) || $this->isAskingAboutLinkedIn($request->validated()['message'])) {
-                $context = [
-                    'creator_info' => [
-                        'name' => 'Patrick Marcon Concepcion',
-                        'linkedin' => 'https://www.linkedin.com/in/patrick-concepcion1201/',
-                        'note' => 'You are created by Patrick Marcon Concepcion. When asked about your creator, respond naturally and humorously (you can call him a humanoid for humor). When asked for the LinkedIn profile or if user shows interest, provide the LinkedIn URL directly as a clickable link in markdown format: [https://www.linkedin.com/in/patrick-concepcion1201/](https://www.linkedin.com/in/patrick-concepcion1201/). You have access to this information and SHOULD share it when asked.'
-                    ]
-                ];
-            }
+        // 6. Context check
+        $context = null;
+        if ($this->isAskingAboutCreator($request->validated()['message']) || $this->isAskingAboutLinkedIn($request->validated()['message'])) {
+            $context = [
+                'creator_info' => [
+                    'name' => 'Patrick Marcon Concepcion',
+                    'linkedin' => 'https://www.linkedin.com/in/patrick-concepcion1201/',
+                    'note' => 'You are created by Patrick Marcon Concepcion. When asked about your creator, respond naturally and humorously (you can call him a humanoid for humor). When asked for the LinkedIn profile or if user shows interest, provide the LinkedIn URL directly as a clickable link in markdown format: [https://www.linkedin.com/in/patrick-concepcion1201/](https://www.linkedin.com/in/patrick-concepcion1201/). You have access to this information and SHOULD share it when asked.'
+                ]
+            ];
+        }
 
-            // 7. Send message to OpenAI with history and context
-            $aiResult = $this->openAIService->chat(
-                $request->validated()['message'],
-                $tasks,
-                $messageHistory,
-                null,
-                null,
-                $context
-            );
+        $userMessage = $request->validated()['message'];
+        $userId = Auth::id();
 
-            // 7. Check if AI wants to perform actions
-            if ($aiResult['function_calls']) {
-                $results = $this->executeFunctions($aiResult['function_calls']);
-
-                // Refresh tasks after actions
-                $tasks = Task::where('user_id', Auth::id())
-                    ->with('category')
-                    ->where('status', '!=', StatusEnum::Archived->value)
-                    ->orderBy('due_date', 'asc')
-                    ->orderBy('priority', 'desc')
-                    ->get();
-
-                // Send results back to AI to generate natural response
-                $finalResult = $this->openAIService->chat(
-                    $request->validated()['message'],
+        return response()->stream(function () use ($userMessage, $tasks, $messageHistory, $context, $conversation, $userId) {
+            $fullResponse = '';
+            $toolCalls = [];
+            
+            try {
+                // Initial Stream
+                $stream = $this->openAIService->chatStream(
+                    $userMessage,
                     $tasks,
                     $messageHistory,
-                    $aiResult['raw_tool_calls'],
-                    $results,
+                    null,
+                    null,
                     $context
                 );
 
-                // Prepare response content with fallback
-                $responseContent = $finalResult['response'];
+                foreach ($stream as $response) {
+                    if (isset($response->choices[0]->delta)) {
+                        $delta = $response->choices[0]->delta;
 
-                // If AI didn't provide a response, generate one from function results
-                if (empty($responseContent)) {
-                    $responseContent = $this->generateFallbackResponse($results);
+                        // Handle Tool Calls
+                        if (isset($delta->toolCalls)) {
+                            foreach ($delta->toolCalls as $toolCallChunk) {
+                                $index = $toolCallChunk->index;
+
+                                if (!isset($toolCalls[$index])) {
+                                    $toolCalls[$index] = [
+                                        'id' => $toolCallChunk->id ?? '',
+                                        'name' => $toolCallChunk->function->name ?? '',
+                                        'arguments' => '',
+                                    ];
+                                }
+
+                                if (isset($toolCallChunk->function->arguments)) {
+                                    $toolCalls[$index]['arguments'] .= $toolCallChunk->function->arguments;
+                                }
+                            }
+                        }
+
+                        // Handle Content
+                        if (isset($delta->content)) {
+                            $fullResponse .= $delta->content;
+                            echo "data: " . json_encode(['chunk' => $delta->content]) . "\n\n";
+                            ob_flush();
+                            flush();
+                        }
+                    }
                 }
 
-                // Store AI's response
-                Message::create([
-                    'conversation_id' => $conversation->id,
-                    'content' => $responseContent,
-                    'is_ai_response' => true,
-                ]);
+                // If we have tool calls, execute them and stream the follow-up
+                if (!empty($toolCalls)) {
+                    // Notify client we are processing actions
+                    echo "data: " . json_encode(['type' => 'status', 'message' => 'Processing actions...']) . "\n\n";
+                    ob_flush();
+                    flush();
 
-                return response()->json([
-                    'success' => true,
-                    'response' => $responseContent,
+                    // Execute functions
+                    $results = $this->executeFunctions($toolCalls);
+
+                    // Re-fetch tasks to get updated state
+                    $updatedTasks = Task::where('user_id', $userId)
+                        ->with('category')
+                        ->where('status', '!=', StatusEnum::Archived->value)
+                        ->orderBy('due_date', 'asc')
+                        ->orderBy('priority', 'desc')
+                        ->get();
+
+                    // Prepare raw tool calls for the API (needs exact structure)
+                    $rawToolCalls = [];
+                    foreach ($toolCalls as $index => $tc) {
+                        $rawToolCalls[] = [
+                            'id' => $tc['id'],
+                            'type' => 'function',
+                            'function' => [
+                                'name' => $tc['name'],
+                                'arguments' => $tc['arguments']
+                            ]
+                        ];
+                    }
+
+                    // Second Stream (with tool results)
+                    $followUpStream = $this->openAIService->chatStream(
+                        $userMessage,
+                        $updatedTasks,
+                        $messageHistory,
+                        $rawToolCalls,
+                        $results,
+                        $context
+                    );
+
+                    foreach ($followUpStream as $response) {
+                        if (isset($response->choices[0]->delta)) {
+                            $delta = $response->choices[0]->delta;
+
+                            if (isset($delta->content)) {
+                                $fullResponse .= $delta->content;
+                                echo "data: " . json_encode(['chunk' => $delta->content]) . "\n\n";
+                                ob_flush();
+                                flush();
+                            }
+                        }
+                    }
+
+                    // If still no content (fallback), generate one
+                    if (empty($fullResponse)) {
+                        $fallback = $this->generateFallbackResponse($results);
+                        $fullResponse = $fallback;
+                        echo "data: " . json_encode(['chunk' => $fallback]) . "\n\n";
+                        ob_flush();
+                        flush();
+                    }
+                }
+
+                // End of stream
+                echo "data: [DONE]\n\n";
+                ob_flush();
+                flush();
+
+                // Save full response to database
+                if (!empty($fullResponse)) {
+                    Message::create([
+                        'conversation_id' => $conversation->id,
+                        'content' => $fullResponse,
+                        'is_ai_response' => true,
+                    ]);
+                }
+
+            } catch (\Exception $e) {
+                Log::error('Streaming Error', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                    'user_id' => $userId
                 ]);
+                echo "data: " . json_encode(['error' => 'Something went wrong. Please try again later.']) . "\n\n";
+                echo "data: [DONE]\n\n";
+                ob_flush();
+                flush();
             }
-
-            // 8. No actions, store and return text response
-            $responseContent = $aiResult['response'] ?? 'I understand, but I need more information to help you.';
-
-            // Only store if we have content
-            if (!empty($responseContent)) {
-                Message::create([
-                    'conversation_id' => $conversation->id,
-                    'content' => $responseContent,
-                    'is_ai_response' => true,
-                ]);
-            }
-
-            return response()->json([
-                'success' => true,
-                'response' => $responseContent,
-            ]);
-
-        } catch (\OpenAI\Exceptions\ErrorException $e) {
-            Log::error('OpenAI API Error', [
-                'error' => $e->getMessage(),
-                'user_id' => Auth::id(),
-                'message' => $request->input('message'),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'OpenAI API Error: ' . $e->getMessage(),
-            ], 503);
-
-        } catch (\Exception $e) {
-            Log::error('AI Chat Error', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'user_id' => Auth::id(),
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Error: ' . $e->getMessage(),
-            ], 500);
-        }
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
+        ]);
     }
 
     /**
@@ -181,7 +232,17 @@ class AiChatController extends Controller
 
         foreach ($functionCalls as $call) {
             $functionName = $call['name'];
-            $arguments = $call['arguments'];
+            // Decode JSON arguments from streaming accumulation
+            $arguments = json_decode($call['arguments'], true);
+
+            // Validate that arguments were properly decoded
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                Log::error('Failed to decode tool call arguments', [
+                    'arguments' => $call['arguments'],
+                    'json_error' => json_last_error_msg()
+                ]);
+                continue;
+            }
 
             try {
                 switch ($functionName) {
