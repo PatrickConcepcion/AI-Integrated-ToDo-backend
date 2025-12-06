@@ -308,6 +308,309 @@ class AiChatTest extends TestCase
     }
 
     // ==========================================
+    // DUPLICATE TASK HANDLING TESTS
+    // ==========================================
+
+    public function test_chat_handles_update_duplicate_tasks_without_status_clarification(): void
+    {
+        $user = User::factory()->create();
+        $token = $this->loginAsUser($user);
+
+        // Create two tasks with the same title but different statuses
+        $task1 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Task',
+            'status' => StatusEnum::Todo->value,
+            'priority' => PriorityEnum::Low->value,
+        ]);
+
+        $task2 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Task',
+            'status' => StatusEnum::InProgress->value,
+            'priority' => PriorityEnum::Medium->value,
+        ]);
+
+        $this->mockOpenAIServiceWithToolCallRequiringClarification('update_task', [
+            'task_title' => 'Duplicate Task',
+            'priority' => 'high',
+            // No task_status provided
+        ]);
+
+        $response = $this->auth($token)->postJson('/api/ai/chat', [
+            'message' => 'Update Duplicate Task to high priority',
+        ]);
+
+        $response->assertStatus(200);
+        $content = $response->streamedContent();
+
+        // Should contain clarification message about duplicates
+        $this->assertStringContainsString('Found 2 tasks named \\"Duplicate Task\\"', $content);
+        $this->assertStringContainsString('Status=TODO', $content);
+        $this->assertStringContainsString('Priority=low', $content);
+        $this->assertStringContainsString('Status=IN_PROGRESS', $content);
+        $this->assertStringContainsString('Priority=medium', $content);
+        $this->assertStringContainsString('Please specify which one', $content);
+
+        // No task should be updated
+        $this->assertDatabaseHas('tasks', [
+            'id' => $task1->id,
+            'priority' => PriorityEnum::Low->value,
+        ]);
+        $this->assertDatabaseHas('tasks', [
+            'id' => $task2->id,
+            'priority' => PriorityEnum::Medium->value,
+        ]);
+    }
+
+    public function test_chat_handles_update_duplicate_tasks_with_matching_status(): void
+    {
+        $user = User::factory()->create();
+        $token = $this->loginAsUser($user);
+
+        // Create two tasks with the same title but different statuses
+        $task1 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Task',
+            'status' => StatusEnum::Todo->value,
+            'priority' => PriorityEnum::Low->value,
+        ]);
+
+        $task2 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Task',
+            'status' => StatusEnum::InProgress->value,
+            'priority' => PriorityEnum::Medium->value,
+        ]);
+
+        $this->mockOpenAIServiceWithToolCall('update_task', [
+            'task_title' => 'Duplicate Task',
+            'priority' => 'high',
+            'task_status' => 'todo', // Matches task1
+        ]);
+
+        $response = $this->auth($token)->postJson('/api/ai/chat', [
+            'message' => 'Update the todo Duplicate Task to high priority',
+        ]);
+
+        $response->assertStatus(200);
+        $response->streamedContent();
+
+        // Only task1 should be updated
+        $this->assertDatabaseHas('tasks', [
+            'id' => $task1->id,
+            'priority' => 'high',
+        ]);
+        $this->assertDatabaseHas('tasks', [
+            'id' => $task2->id,
+            'priority' => PriorityEnum::Medium->value, // Unchanged
+        ]);
+    }
+
+    public function test_chat_handles_update_duplicate_tasks_with_non_matching_status(): void
+    {
+        $user = User::factory()->create();
+        $token = $this->loginAsUser($user);
+
+        // Create two tasks with the same title but different statuses
+        $task1 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Task',
+            'status' => StatusEnum::Todo->value,
+            'priority' => PriorityEnum::Low->value,
+        ]);
+
+        $task2 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Task',
+            'status' => StatusEnum::InProgress->value,
+            'priority' => PriorityEnum::Medium->value,
+        ]);
+
+        $this->mockOpenAIServiceWithToolCallRequiringClarification('update_task', [
+            'task_title' => 'Duplicate Task',
+            'priority' => 'high',
+            'task_status' => 'completed', // Doesn't match any
+        ]);
+
+        $response = $this->auth($token)->postJson('/api/ai/chat', [
+            'message' => 'Update the completed Duplicate Task to high priority',
+        ]);
+
+        $response->assertStatus(200);
+        $content = $response->streamedContent();
+
+        // Should contain error message
+        $this->assertStringContainsString('No task named \\"Duplicate Task\\" found with status \\"completed\\"', $content);
+
+        // No task should be updated
+        $this->assertDatabaseHas('tasks', [
+            'id' => $task1->id,
+            'priority' => PriorityEnum::Low->value,
+        ]);
+        $this->assertDatabaseHas('tasks', [
+            'id' => $task2->id,
+            'priority' => PriorityEnum::Medium->value,
+        ]);
+    }
+
+    public function test_chat_handles_update_duplicate_tasks_including_archived(): void
+    {
+        $user = User::factory()->create();
+        $token = $this->loginAsUser($user);
+
+        // Create tasks: one active, one archived, both with same title
+        $activeTask = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Archived Test Task',
+            'status' => StatusEnum::Todo->value,
+            'priority' => PriorityEnum::Low->value,
+        ]);
+
+        $archivedTask = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Archived Test Task',
+            'status' => StatusEnum::Archived->value,
+            'priority' => PriorityEnum::High->value,
+        ]);
+
+        $this->mockOpenAIServiceWithToolCall('update_task', [
+            'task_title' => 'Archived Test Task',
+            'priority' => 'medium',
+            'task_status' => 'archived', // Should find the archived one
+        ]);
+
+        $response = $this->auth($token)->postJson('/api/ai/chat', [
+            'message' => 'Update the archived task to medium priority',
+        ]);
+
+        $response->assertStatus(200);
+        $response->streamedContent();
+
+        // Only archived task should be updated
+        $this->assertDatabaseHas('tasks', [
+            'id' => $archivedTask->id,
+            'priority' => 'medium',
+        ]);
+        $this->assertDatabaseHas('tasks', [
+            'id' => $activeTask->id,
+            'priority' => PriorityEnum::Low->value, // Unchanged
+        ]);
+    }
+
+    public function test_chat_handles_delete_duplicate_tasks_without_status_clarification(): void
+    {
+        $user = User::factory()->create();
+        $token = $this->loginAsUser($user);
+
+        // Create two tasks with the same title but different statuses
+        $task1 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Delete Task',
+            'status' => StatusEnum::Todo->value,
+        ]);
+
+        $task2 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Delete Task',
+            'status' => StatusEnum::Completed->value,
+        ]);
+
+        $this->mockOpenAIServiceWithToolCallRequiringClarification('delete_task', [
+            'task_title' => 'Duplicate Delete Task',
+            // No task_status provided
+        ]);
+
+        $response = $this->auth($token)->postJson('/api/ai/chat', [
+            'message' => 'Delete Duplicate Delete Task',
+        ]);
+
+        $response->assertStatus(200);
+        $content = $response->streamedContent();
+
+        // Should contain clarification message about duplicates
+        $this->assertStringContainsString('Found 2 tasks named \\"Duplicate Delete Task\\"', $content);
+        $this->assertStringContainsString('Please specify which one', $content);
+
+        // No task should be deleted
+        $this->assertDatabaseHas('tasks', ['id' => $task1->id]);
+        $this->assertDatabaseHas('tasks', ['id' => $task2->id]);
+    }
+
+    public function test_chat_handles_delete_duplicate_tasks_with_matching_status(): void
+    {
+        $user = User::factory()->create();
+        $token = $this->loginAsUser($user);
+
+        // Create two tasks with the same title but different statuses
+        $task1 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Delete Task',
+            'status' => StatusEnum::Todo->value,
+        ]);
+
+        $task2 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Delete Task',
+            'status' => StatusEnum::Completed->value,
+        ]);
+
+        $this->mockOpenAIServiceWithToolCall('delete_task', [
+            'task_title' => 'Duplicate Delete Task',
+            'task_status' => 'completed', // Matches task2
+        ]);
+
+        $response = $this->auth($token)->postJson('/api/ai/chat', [
+            'message' => 'Delete the completed Duplicate Delete Task',
+        ]);
+
+        $response->assertStatus(200);
+        $response->streamedContent();
+
+        // Only task2 should be deleted
+        $this->assertDatabaseMissing('tasks', ['id' => $task2->id]);
+        $this->assertDatabaseHas('tasks', ['id' => $task1->id]);
+    }
+
+    public function test_chat_handles_delete_duplicate_tasks_with_non_matching_status(): void
+    {
+        $user = User::factory()->create();
+        $token = $this->loginAsUser($user);
+
+        // Create two tasks with the same title but different statuses
+        $task1 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Delete Task',
+            'status' => StatusEnum::Todo->value,
+        ]);
+
+        $task2 = Task::factory()->create([
+            'user_id' => $user->id,
+            'title' => 'Duplicate Delete Task',
+            'status' => StatusEnum::Completed->value,
+        ]);
+
+        $this->mockOpenAIServiceWithToolCallRequiringClarification('delete_task', [
+            'task_title' => 'Duplicate Delete Task',
+            'task_status' => 'in_progress', // Doesn't match any
+        ]);
+
+        $response = $this->auth($token)->postJson('/api/ai/chat', [
+            'message' => 'Delete the in progress Duplicate Delete Task',
+        ]);
+
+        $response->assertStatus(200);
+        $content = $response->streamedContent();
+
+        // Should contain error message
+        $this->assertStringContainsString('No task named \\"Duplicate Delete Task\\" found with status \\"in_progress\\"', $content);
+
+        // No task should be deleted
+        $this->assertDatabaseHas('tasks', ['id' => $task1->id]);
+        $this->assertDatabaseHas('tasks', ['id' => $task2->id]);
+    }
+
+    // ==========================================
     // ERROR HANDLING TESTS
     // ==========================================
 
@@ -733,6 +1036,25 @@ class AiChatTest extends TestCase
     }
 
     /**
+     * Mock OpenAI service to return a tool call that requires clarification (no follow-up response)
+     */
+    private function mockOpenAIServiceWithToolCallRequiringClarification(string $functionName, array $arguments): void
+    {
+        $this->instance(
+            OpenAIService::class,
+            Mockery::mock(OpenAIService::class, function (MockInterface $mock) use ($functionName, $arguments) {
+                $mock->shouldReceive('chatStream')
+                    ->once()
+                    ->andReturn($this->createMockStreamWithToolCall($functionName, $arguments));
+
+                // No follow-up response for clarification cases
+                $mock->shouldReceive('chatStream')
+                    ->andReturn($this->createMockStream(''));
+            })
+        );
+    }
+
+    /**
      * Mock OpenAI service to throw an exception
      */
     private function mockOpenAIServiceWithException(\Exception $exception): void
@@ -745,10 +1067,6 @@ class AiChatTest extends TestCase
             })
         );
     }
-
-    /**
-     * Mock OpenAI service to return malformed tool call arguments
-     */
     private function mockOpenAIServiceWithMalformedToolCall(): void
     {
         $this->instance(
