@@ -27,9 +27,9 @@ class AiChatController extends Controller
     public function chat(AiChatRequest $request): \Symfony\Component\HttpFoundation\StreamedResponse
     {
         // 1. Get authenticated user's tasks (Pre-fetch outside stream)
+        // Include all tasks (active + archived) so AI can reference and unarchive them
         $tasks = Task::where('user_id', Auth::id())
             ->with('category')
-            ->where('status', '!=', StatusEnum::Archived->value)
             ->orderBy('due_date', 'asc')
             ->orderBy('priority', 'desc')
             ->get();
@@ -133,10 +133,9 @@ class AiChatController extends Controller
                     // Execute functions
                     $results = $this->executeFunctions($toolCalls);
 
-                    // Re-fetch tasks to get updated state
+                    // Re-fetch tasks to get updated state (include archived for context)
                     $updatedTasks = Task::where('user_id', $userId)
                         ->with('category')
-                        ->where('status', '!=', StatusEnum::Archived->value)
                         ->orderBy('due_date', 'asc')
                         ->orderBy('priority', 'desc')
                         ->get();
@@ -297,6 +296,7 @@ class AiChatController extends Controller
             'priority' => $args['priority'] ?? 'medium',
             'due_date' => $args['due_date'] ?? null,
             'category_id' => $args['category_id'] ?? null,
+            'status' => $args['status'] ?? 'todo',
         ]);
 
         return [
@@ -315,16 +315,57 @@ class AiChatController extends Controller
      */
     private function updateTask(array $args): array
     {
-        // Find task by exact title match (including archived tasks so they can be unarchived)
-        $task = Task::where('user_id', Auth::id())
-            ->where('title', $args['task_title'])
-            ->first();
+        // Find all tasks with the same title (including archived tasks so they can be unarchived)
+        $query = Task::where('user_id', Auth::id())
+            ->where('title', $args['task_title']);
+        
+        $matchingTasks = $query->get();
 
-        if (!$task) {
+        if ($matchingTasks->isEmpty()) {
             return [
                 'success' => false,
                 'message' => "❌ Task not found: \"{$args['task_title']}\"",
             ];
+        }
+
+        // If multiple tasks with same name exist
+        if ($matchingTasks->count() > 1) {
+            // If task_status provided, use it to disambiguate
+            if (isset($args['task_status'])) {
+                $task = $matchingTasks->first(function ($t) use ($args) {
+                    $statusValue = $t->status instanceof StatusEnum ? $t->status->value : $t->status;
+                    return $statusValue === $args['task_status'];
+                });
+
+                if (!$task) {
+                    return [
+                        'success' => false,
+                        'message' => "❌ No task named \"{$args['task_title']}\" found with status \"{$args['task_status']}\"",
+                    ];
+                }
+            } else {
+                // No disambiguation provided - return info about duplicates
+                $duplicates = [];
+                $index = 1;
+                foreach ($matchingTasks as $t) {
+                    $statusValue = $t->status instanceof StatusEnum ? $t->status->value : $t->status;
+                    $priorityValue = $t->priority instanceof \App\Enums\PriorityEnum ? $t->priority->value : $t->priority;
+                    $category = $t->category ? " in category '{$t->category->name}'" : '';
+                    $dueDate = $t->due_date ? " (due: {$t->due_date})" : '';
+                    $description = $t->description ? " - Description: {$t->description}" : '';
+                    $duplicates[] = "#{$index}: Status=" . strtoupper($statusValue) . ", Priority={$priorityValue}{$category}{$dueDate}{$description}";
+                    $index++;
+                }
+                $duplicateInfo = implode(' || ', $duplicates);
+
+                return [
+                    'success' => false,
+                    'requires_clarification' => true,
+                    'message' => "⚠️ Found {$matchingTasks->count()} tasks named \"{$args['task_title']}\": {$duplicateInfo}. Please specify which one (by status: todo/in_progress/completed/archived).",
+                ];
+            }
+        } else {
+            $task = $matchingTasks->first();
         }
 
         // Update fields that were provided
@@ -381,25 +422,67 @@ class AiChatController extends Controller
      */
     private function deleteTask(array $args): array
     {
-        // Find task by exact title match (including archived tasks)
-        $task = Task::where('user_id', Auth::id())
-            ->where('title', $args['task_title'])
-            ->first();
+        // Find all tasks with the same title (including archived tasks)
+        $query = Task::where('user_id', Auth::id())
+            ->where('title', $args['task_title']);
+        
+        $matchingTasks = $query->get();
 
-        if (!$task) {
+        if ($matchingTasks->isEmpty()) {
             return [
                 'success' => false,
                 'message' => "❌ Task not found: \"{$args['task_title']}\"",
             ];
         }
 
+        // If multiple tasks with same name exist
+        if ($matchingTasks->count() > 1) {
+            // If task_status provided, use it to disambiguate
+            if (isset($args['task_status'])) {
+                $task = $matchingTasks->first(function ($t) use ($args) {
+                    $statusValue = $t->status instanceof StatusEnum ? $t->status->value : $t->status;
+                    return $statusValue === $args['task_status'];
+                });
+
+                if (!$task) {
+                    return [
+                        'success' => false,
+                        'message' => "❌ No task named \"{$args['task_title']}\" found with status \"{$args['task_status']}\"",
+                    ];
+                }
+            } else {
+                // No disambiguation provided - return info about duplicates
+                $duplicates = [];
+                $index = 1;
+                foreach ($matchingTasks as $t) {
+                    $statusValue = $t->status instanceof StatusEnum ? $t->status->value : $t->status;
+                    $priorityValue = $t->priority instanceof \App\Enums\PriorityEnum ? $t->priority->value : $t->priority;
+                    $category = $t->category ? " in category '{$t->category->name}'" : '';
+                    $dueDate = $t->due_date ? " (due: {$t->due_date})" : '';
+                    $description = $t->description ? " - Description: {$t->description}" : '';
+                    $duplicates[] = "#{$index}: Status=" . strtoupper($statusValue) . ", Priority={$priorityValue}{$category}{$dueDate}{$description}";
+                    $index++;
+                }
+                $duplicateInfo = implode(' || ', $duplicates);
+
+                return [
+                    'success' => false,
+                    'requires_clarification' => true,
+                    'message' => "⚠️ Found {$matchingTasks->count()} tasks named \"{$args['task_title']}\": {$duplicateInfo}. Please specify which one (by status: todo/in_progress/completed/archived).",
+                ];
+            }
+        } else {
+            $task = $matchingTasks->first();
+        }
+
         $title = $task->title;
+        $statusValue = $task->status instanceof StatusEnum ? $task->status->value : $task->status;
         $task->delete();
 
         return [
             'success' => true,
             'action' => 'delete',
-            'message' => "✅ Deleted task: \"{$title}\"",
+            'message' => "✅ Deleted task: \"{$title}\" (was {$statusValue})",
         ];
     }
 
