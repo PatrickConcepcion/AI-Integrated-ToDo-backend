@@ -6,6 +6,7 @@ use App\Http\Requests\AiChatRequest;
 use App\Services\OpenAIService;
 use App\Models\Task;
 use App\Enums\StatusEnum;
+use App\Enums\PriorityEnum;
 use App\Models\Conversation;
 use App\Models\Message;
 use Illuminate\Http\JsonResponse;
@@ -306,7 +307,7 @@ class AiChatController extends Controller
             // Ensure we convert enum instances to string values when building messages
             'message' => "✅ Created task: \"{$task->title}\"" .
                          ($task->due_date ? " (Due: {$task->due_date})" : '') .
-                         ((isset($task->priority) && $task->priority instanceof \App\Enums\PriorityEnum) ? " [Priority: {$task->priority->value}]" : ($task->priority ? " [Priority: {$task->priority}]" : '')),
+                         ((isset($task->priority) && $task->priority instanceof PriorityEnum) ? " [Priority: {$task->priority->value}]" : ($task->priority ? " [Priority: {$task->priority}]" : '')),
         ];
     }
 
@@ -349,7 +350,7 @@ class AiChatController extends Controller
                 $index = 1;
                 foreach ($matchingTasks as $t) {
                     $statusValue = $t->status instanceof StatusEnum ? $t->status->value : $t->status;
-                    $priorityValue = $t->priority instanceof \App\Enums\PriorityEnum ? $t->priority->value : $t->priority;
+                    $priorityValue = $t->priority instanceof PriorityEnum ? $t->priority->value : $t->priority;
                     $category = $t->category ? " in category '{$t->category->name}'" : '';
                     $dueDate = $t->due_date ? " (due: {$t->due_date})" : '';
                     $description = $t->description ? " - Description: {$t->description}" : '';
@@ -456,7 +457,7 @@ class AiChatController extends Controller
                 $index = 1;
                 foreach ($matchingTasks as $t) {
                     $statusValue = $t->status instanceof StatusEnum ? $t->status->value : $t->status;
-                    $priorityValue = $t->priority instanceof \App\Enums\PriorityEnum ? $t->priority->value : $t->priority;
+                    $priorityValue = $t->priority instanceof PriorityEnum ? $t->priority->value : $t->priority;
                     $category = $t->category ? " in category '{$t->category->name}'" : '';
                     $dueDate = $t->due_date ? " (due: {$t->due_date})" : '';
                     $description = $t->description ? " - Description: {$t->description}" : '';

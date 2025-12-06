@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use App\Enums\StatusEnum;
 use App\Enums\PriorityEnum;
+use App\Models\Task;
 
 class OpenAIService
 {
@@ -693,8 +694,10 @@ EOT;
 
     /**
      * Format a single task for AI context
+     * @param \App\Models\Task $task
+     * @return string
      */
-    private function formatSingleTask($task): string
+    private function formatSingleTask(\App\Models\Task $task): string
     {
         // Get string values from enums
         $statusValue = $task->status instanceof StatusEnum ? $task->status->value : $task->status;
